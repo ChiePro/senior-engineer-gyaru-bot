@@ -5,3 +5,5 @@ line-length = 100
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# リポジトリルートを import パスに追加し、slackbot / scripts を解決できるようにする。
+pythonpath = ["."]

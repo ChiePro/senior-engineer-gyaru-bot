@@ -7,7 +7,7 @@ handle_mention と同じ合成(prepare_reply → 投稿 → update_long_term_mem
 このハーネスで再現してテストする。
 """
 
-import bot_core
+from slackbot import core as bot_core
 
 BOT = "BOT"
 USER = "U_ALICE"

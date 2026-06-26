@@ -1,7 +1,7 @@
 """
 AgentCore Memory リソースを「1度だけ」作成するスクリプト (app_strands.py 用)。
 
-namespace は namespaces.py を単一ソースとして参照する(app_strands.py と同じ定義)。
+namespace は slackbot.namespaces を単一ソースとして参照する(app_strands.py と同じ定義)。
 実行すると memory_id が出力されるので、それを app_strands.py の MEMORY_ID に設定する。
 
 TTL (event_expiry_days):
@@ -10,13 +10,13 @@ TTL (event_expiry_days):
 
 使い方:
     pip install bedrock-agentcore
-    BEDROCK_REGION=us-east-1 EVENT_EXPIRY_DAYS=30 python create_memory.py
+    BEDROCK_REGION=us-east-1 EVENT_EXPIRY_DAYS=30 python -m scripts.create_memory
 """
 
 import os
 import sys
 
-from namespaces import NS_PREFERENCES, NS_FACTS, NS_SUMMARIES
+from slackbot.namespaces import NS_PREFERENCES, NS_FACTS, NS_SUMMARIES
 
 REGION = os.environ.get("BEDROCK_REGION", "us-east-1")
 MEMORY_NAME = os.environ.get("MEMORY_NAME", "SlackBotMemory")

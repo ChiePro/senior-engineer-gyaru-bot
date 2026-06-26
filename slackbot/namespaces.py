@@ -1,6 +1,7 @@
 """
-namespace の単一ソース。create_memory.py と app_strands.py の両方がこれを参照することで、
-登録側と検索側の namespace 食い違い(長期記憶がヒットしない不具合)を構造的に防ぐ。
+namespace の単一ソース。scripts/create_memory.py と slackbot/app_strands.py の両方が
+これを参照することで、登録側と検索側の namespace 食い違い(長期記憶がヒットしない不具合)を
+構造的に防ぐ。
 """
 
 # AgentCore に登録する namespace テンプレート。{actorId}/{sessionId} は AgentCore が

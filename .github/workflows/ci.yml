@@ -32,7 +32,7 @@ jobs:
 
       # デプロイ対象ファイル(重い依存で import はできないが構文は検査できる)
       - name: Syntax check (deployable sources)
-        run: python -m compileall -q app.py app_strands.py bot_core.py namespaces.py create_memory.py
+        run: python -m compileall -q slackbot scripts
 
       - name: Lint
         run: ruff check .

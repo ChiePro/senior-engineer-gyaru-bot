@@ -1,8 +1,9 @@
 """
 Slack Bot on AWS Lambda + Amazon Bedrock (DIY 版, long-term + short-term memory)
 
-純粋ロジックは bot_core.py に分離し、ここは外部 I/O (Slack/Bedrock/DynamoDB) の
-実装と配線だけを担当する。これによりロジックを重い依存なしで単体テストできる。
+純粋ロジックは slackbot.core に、人格は slackbot.persona に分離し、ここは外部 I/O
+(Slack/Bedrock/DynamoDB) の実装と配線だけを担当する。これによりロジックとペルソナを
+重い依存なしで単体テストできる。
 
 メモリ:
   - 短期記憶: Slack スレッド履歴 (conversations.replies)。DB 不要。
@@ -14,7 +15,8 @@ Slack Bot on AWS Lambda + Amazon Bedrock (DIY 版, long-term + short-term memory
   MEMORY_MODEL_ID (任意, 既定は BEDROCK_MODEL_ID)
   MEMORY_TABLE (DynamoDB テーブル名)
 
-Lambda パッケージには bot_core.py を同梱すること。
+Lambda パッケージには slackbot パッケージ全体を同梱し、ハンドラは
+`slackbot.app.handler` を指定すること。
 """
 
 import logging
@@ -24,11 +26,12 @@ import boto3
 from slack_bolt import App
 from slack_bolt.adapter.aws_lambda import SlackRequestHandler
 
-from bot_core import (
+from slackbot.core import (
     prepare_reply,
     update_long_term_memory,
     is_slack_retry,
 )
+from slackbot.persona import BASE_SYSTEM_PROMPT
 
 logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,7 +49,6 @@ MEMORY_MODEL_ID = os.environ.get("MEMORY_MODEL_ID", MODEL_ID)
 dynamodb = boto3.resource("dynamodb")
 memory_table = dynamodb.Table(os.environ["MEMORY_TABLE"])
 
-BASE_SYSTEM_PROMPT = "あなたは社内向けの親切なアシスタントです。簡潔に日本語で回答してください。"
 MAX_HISTORY = 20
 MAX_MEMORY_CHARS = 4000
 

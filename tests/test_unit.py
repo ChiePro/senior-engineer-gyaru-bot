@@ -3,9 +3,9 @@
 重い依存(boto3/slack/strands)は不要で実行できる。
 """
 
-import bot_core
-import namespaces
-import create_memory
+from slackbot import core as bot_core
+from slackbot import namespaces
+from scripts import create_memory
 
 
 # --- clean_mention ---

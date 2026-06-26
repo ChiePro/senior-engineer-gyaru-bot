@@ -1,15 +1,17 @@
 """
 Slack Bot on AWS Lambda + Strands Agents + AgentCore Memory
 
-namespace は namespaces.py を単一ソースとして参照し、create_memory.py の登録内容と
-構造的に一致させる。共通ロジック(メンション除去・リトライ判定)は bot_core.py を使う。
+namespace は slackbot.namespaces を単一ソースとして参照し、scripts/create_memory.py の
+登録内容と構造的に一致させる。共通ロジック(メンション除去・リトライ判定)は
+slackbot.core を、人格は slackbot.persona を使う。
 
-Lambda パッケージには bot_core.py / namespaces.py を同梱すること。
+Lambda パッケージには slackbot パッケージ全体を同梱し、ハンドラは
+`slackbot.app_strands.handler` を指定すること。
 
 必要な環境変数:
   SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
   BEDROCK_REGION, BEDROCK_MODEL_ID
-  MEMORY_ID (create_memory.py で作成した AgentCore Memory のID)
+  MEMORY_ID (scripts/create_memory.py で作成した AgentCore Memory のID)
 
 依存: slack-bolt, strands-agents, bedrock-agentcore[strands-agents]
 """
@@ -30,8 +32,9 @@ from bedrock_agentcore.memory.integrations.strands.session_manager import (
     AgentCoreMemorySessionManager,
 )
 
-from bot_core import clean_mention, is_slack_retry
-from namespaces import NS_PREFERENCES, NS_FACTS, resolve
+from slackbot.core import clean_mention, is_slack_retry
+from slackbot.namespaces import NS_PREFERENCES, NS_FACTS, resolve
+from slackbot.persona import STRANDS_SYSTEM_PROMPT
 
 logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,11 +48,6 @@ app = App(
 REGION = os.environ["BEDROCK_REGION"]
 MODEL_ID = os.environ["BEDROCK_MODEL_ID"]
 MEMORY_ID = os.environ["MEMORY_ID"]
-
-SYSTEM_PROMPT = (
-    "あなたは社内向けの親切なアシスタントです。簡潔に日本語で回答してください。"
-    "ユーザーについて分かっている長期的な情報があれば、自然に活かしてください。"
-)
 
 
 def ack_quickly(ack):
@@ -75,7 +73,7 @@ def handle_mention(event, context, say, logger):
         with AgentCoreMemorySessionManager(mem_config, region_name=REGION) as session_manager:
             agent = Agent(
                 model=BedrockModel(model_id=MODEL_ID, region_name=REGION),
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=STRANDS_SYSTEM_PROMPT,
                 session_manager=session_manager,
             )
             reply = str(agent(text))
