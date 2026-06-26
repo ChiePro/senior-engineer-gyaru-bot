@@ -1,0 +1,55 @@
+name: Deploy
+
+# CI が main で成功したときだけデプロイする(テストを通ったコミットのみ本番へ)
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+# OIDC でロールを assume するために id-token が必要
+permissions:
+  id-token: write
+  contents: read
+
+# 同時デプロイを防ぐ(後発が古いデプロイを上書きしないように待たせる)
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # CI が失敗/キャンセルのときは動かさない
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM build (container image)
+        run: sam build
+
+      - name: SAM deploy
+        run: |
+          sam deploy \
+            --region "${{ vars.AWS_REGION }}" \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              "SlackBotToken=${{ secrets.SLACK_BOT_TOKEN }}" \
+              "SlackSigningSecret=${{ secrets.SLACK_SIGNING_SECRET }}" \
+              "BedrockRegion=${{ vars.BEDROCK_REGION }}" \
+              "BedrockModelId=${{ vars.BEDROCK_MODEL_ID }}" \
+              "MemoryId=${{ secrets.MEMORY_ID }}"

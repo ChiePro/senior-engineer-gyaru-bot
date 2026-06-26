@@ -19,7 +19,13 @@ ruff check .                                 # lint (line-length 100, py312)
 python -m compileall -q slackbot scripts     # syntax-check deployables (what CI runs)
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly the last three steps. It needs **no secrets** — see "Why tests need no dependencies" below.
+CI (`.github/workflows/ci.yml`) runs exactly the last three steps. It needs **no secrets** — see "Pure logic is isolated from I/O" below.
+
+```bash
+# Validate deploy artifacts locally (cfn-lint via pip; sam needs Docker)
+cfn-lint template.yaml infra/github-oidc-bootstrap.yaml
+sam build && sam deploy --parameter-overrides "SlackBotToken=... SlackSigningSecret=... MemoryId=..."
+```
 
 ## Two implementations, pick one
 
@@ -31,7 +37,9 @@ The repo ships **two interchangeable handlers** sharing the same `slackbot/core.
 | Heavy deps | boto3, slack-bolt | strands-agents, bedrock-agentcore |
 | Lambda handler | `slackbot.app.handler` | `slackbot.app_strands.handler` |
 
-Both are deployed by zipping the whole `slackbot/` package. `scripts/create_memory.py` is a one-time setup script for the Strands version only (run as `python -m scripts.create_memory` from repo root); it is **not** deployed.
+`scripts/create_memory.py` is a one-time setup script for the Strands version only (run as `python -m scripts.create_memory` from repo root); it is **not** deployed.
+
+**CD only covers the Strands version** (`template.yaml` + `Dockerfile`): on push to `main`, CI runs, and `deploy.yml` (triggered via `workflow_run`, gated on CI success) authenticates to AWS via GitHub OIDC and runs `sam build && sam deploy`, packaging the heavy Strands deps as a **container image**. The OIDC deploy role is provisioned once by `infra/github-oidc-bootstrap.yaml`. The DIY version has no automated deploy — it's zip-deployed manually per the README. Secrets reach the Lambda as env vars via SAM `--parameter-overrides` sourced from GitHub Secrets (skeleton simplification; production should use Secrets Manager/SSM).
 
 ## Architecture that spans files
 

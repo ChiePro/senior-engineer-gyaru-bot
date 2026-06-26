@@ -252,6 +252,80 @@ namespace の対応(`scripts/create_memory.py` と `slackbot/app_strands.py` が
 
 ---
 
+## CI/CD(自動デプロイ)
+
+`main` への push で **CI(lint + test)→ 成功したら自動で本番デプロイ** が走ります。
+デプロイ対象は **Strands 版**(`slackbot.app_strands.handler`)で、依存が重いため
+**コンテナイメージ**として AWS SAM でデプロイします。
+
+| ファイル | 役割 |
+|---|---|
+| `Dockerfile` | Strands 版のコンテナイメージ(`requirements_strands.txt` + `slackbot/`) |
+| `template.yaml` | SAM テンプレート。Lambda(コンテナ)+ API Gateway + IAM を定義 |
+| `samconfig.toml` | スタック名・S3/ECR 自動解決などのデプロイ既定値 |
+| `infra/github-oidc-bootstrap.yaml` | GitHub OIDC プロバイダ + デプロイ用 IAM ロール(初回1度だけ) |
+| `.github/workflows/deploy.yml` | CI 成功後に OIDC で assume → `sam build && sam deploy` |
+
+### フロー
+
+```
+push (main) ──> CI (ci.yml: compileall + ruff + pytest)
+                   │ success
+                   └─> Deploy (deploy.yml, workflow_run)
+                         OIDC で IAM ロールを assume
+                         sam build (Docker でイメージ作成)
+                         sam deploy (CloudFormation でスタック更新)
+```
+
+CI が失敗したコミットはデプロイされません(`deploy.yml` は CI の成功時のみ起動)。
+
+### 初回セットアップ
+
+1. **OIDC ロールを作成**(1度だけ。ローカルから AWS 管理者権限で実行):
+
+   ```bash
+   aws cloudformation deploy \
+     --template-file infra/github-oidc-bootstrap.yaml \
+     --stack-name gyaru-bot-oidc \
+     --capabilities CAPABILITY_NAMED_IAM \
+     --parameter-overrides GitHubOrg=ChiePro GitHubRepo=senior-engineer-gyaru-bot
+   # 出力 RoleArn を控える。
+   # 既に token.actions.githubusercontent.com の OIDC プロバイダがある場合は
+   # 末尾に CreateOIDCProvider=false を足す。
+   ```
+
+2. **AgentCore Memory を作成**して `MEMORY_ID` を取得(「Strands 版セットアップ」手順2)。
+
+3. **GitHub に変数とシークレットを登録**(Settings > Secrets and variables > Actions):
+
+   | 種別 | キー | 例 / 説明 |
+   |------|------|-----------|
+   | Variables | `AWS_DEPLOY_ROLE_ARN` | 手順1の出力 RoleArn |
+   | Variables | `AWS_REGION` | デプロイ先リージョン (例 `us-east-1`) |
+   | Variables | `BEDROCK_REGION` | Bedrock/Memory のリージョン |
+   | Variables | `BEDROCK_MODEL_ID` | 例 `us.amazon.nova-micro-v1:0` |
+   | Secrets | `SLACK_BOT_TOKEN` | `xoxb-...` |
+   | Secrets | `SLACK_SIGNING_SECRET` | 署名シークレット |
+   | Secrets | `MEMORY_ID` | 手順2で作成した Memory のID |
+
+4. `main` に push。デプロイ後、スタック出力 `SlackRequestUrl` を Slack の
+   **Event Subscriptions** の Request URL に設定する(`sam list stack-outputs`
+   または CloudFormation コンソールで確認)。
+
+### ローカルから手動デプロイ
+
+```bash
+sam build
+sam deploy --parameter-overrides \
+  "SlackBotToken=xoxb-..." "SlackSigningSecret=..." \
+  "BedrockRegion=us-east-1" "BedrockModelId=us.amazon.nova-micro-v1:0" "MemoryId=..."
+```
+
+> 秘密情報は現状 Lambda 環境変数として渡しています(スケルトン簡略化のため)。
+> 本番では Secrets Manager / SSM Parameter Store への移行を検討してください。
+
+---
+
 ## テスト
 
 純粋ロジックは `slackbot/core.py` / `slackbot/namespaces.py` に、口調は `slackbot/persona.py` に

@@ -21,6 +21,10 @@ build/
 dist/
 *.zip
 
+# AWS SAM ビルド成果物
+.aws-sam/
+samconfig.local.toml
+
 # OS / editor
 .DS_Store
 .idea/
