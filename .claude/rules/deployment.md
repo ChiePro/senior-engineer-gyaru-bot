@@ -17,8 +17,13 @@
 ## CI/CD
 
 - `ci.yml`: push/PR で `compileall` + `ruff` + `pytest`(secret 不要)。
-- `deploy.yml`: `workflow_run` で CI 成功時のみ起動 → OIDC assume → ECR build/push(SHA)→
-  `cloudformation deploy ecs.yaml` → `ecs wait services-stable`。
+- `deploy.yml`: `workflow_run` で CI 成功時のみ起動。3ジョブ構成 = **detect**(差分に `ecs.yaml` が
+  含まれるか=お金に関わる変更かを判定)→ **approval**(コスト変更時のみ、required reviewers 付き
+  environment `production` を通って所有者の Approve を待つ)→ **deploy**(OIDC assume → ECR build/push
+  [SHA] → `cloudformation deploy ecs.yaml` → `ecs wait services-stable`)。
+- **お金に関わる変更は承認必須**: Fargate の CPU/メモリ/タスク数・DynamoDB 課金モード・Bedrock モデルは
+  すべて `ecs.yaml` で管理する。これらを変えると `ecs.yaml` が差分に出て、デプロイ前に所有者承認が要る。
+  詳細は [docs/adr/0007-cost-change-approval-gate.md](../../docs/adr/0007-cost-change-approval-gate.md)。
 - OIDC ロールは `infra/github-oidc-bootstrap.yaml`(`ecs-container-deploy` ポリシー、
   PassRole は `ecs-tasks.amazonaws.com`、IAM ロール管理は `gyaru-bot-ecs-*` に限定)。
 
@@ -26,8 +31,12 @@
 
 | 種別 | キー |
 |---|---|
-| Variables | `AWS_DEPLOY_ROLE_ARN` / `AWS_REGION` / `BEDROCK_REGION` / `BEDROCK_MODEL_ID` / `ECR_REPOSITORY` / `VPC_ID` / `SUBNET_IDS` |
+| Variables | `AWS_DEPLOY_ROLE_ARN` / `AWS_REGION` / `BEDROCK_REGION` / `ECR_REPOSITORY` / `VPC_ID` / `SUBNET_IDS` |
 | Secrets | `MEMORY_ID` |
+
+> Bedrock モデル ID は GitHub 変数ではなく **`ecs.yaml` の `BedrockModelId` Default** が単一ソース
+> (モデル単価=お金に関わるため、ファイル差分として承認ゲートに乗せる)。`deploy.yml` は
+> `BedrockModelId` を override しない。
 
 ## ローカルからの操作
 

@@ -5,9 +5,11 @@ description: Change the Bedrock model the gyaru bot uses (BEDROCK_MODEL_ID). Use
 
 # Bedrock モデルの切り替え
 
-応答モデルは環境変数 `BEDROCK_MODEL_ID`(ECS タスク + GitHub 変数 + `ecs.yaml` の Default)で決まる。
-Strands `BedrockModel` 経由なのでモデルは差し替え可能。ただし「Bedrock に在るか」「Strands の
-ConverseStream で叩けるか」「複雑なペルソナ+ツール+人物注入プロンプトに従えるか」を**必ず実測**してから本番へ。
+応答モデルは **`ecs.yaml` の `BedrockModelId` Default が単一ソース**(deploy.yml は override しない)。
+モデル単価=お金に関わるので、ここを変えると `ecs.yaml` の差分として**デプロイ前に所有者承認が必要**になる
+([deployment ルール](../../rules/deployment.md))。Strands `BedrockModel` 経由でモデルは差し替え可能だが、
+「Bedrock に在るか」「Strands の ConverseStream で叩けるか」「複雑なペルソナ+ツール+人物注入プロンプトに
+従えるか」を**必ず実測**してから本番へ。
 
 ## 既知の事実(2026-06 時点)
 
@@ -49,10 +51,11 @@ PY
 
 ## 本番へ反映
 
-1. GitHub 変数を更新: `gh variable set BEDROCK_MODEL_ID --body "<新ID>"`
-2. `ecs.yaml` の `BedrockModelId` Default も合わせて更新(PR)。
+1. `ecs.yaml` の `BedrockModelId` の `Default:` を新 ID に変更(これが単一ソース)。
+2. ブランチ → PR(`main` 直 push 禁止)。
 3. 反映は2通り:
-   - **CI/CD 経由(推奨)**: PR をマージ → deploy.yml が新タスクを起動。
+   - **CI/CD 経由(推奨)**: PR をマージ → CI 成功後、deploy.yml の **detect** が `ecs.yaml` 変更を検出 →
+     **approval** で所有者の Approve を待つ → Approve すると deploy が走り新タスク起動。
    - **即時手動**: `deploy-and-rollback` スキルの手順でビルド/デプロイ、または
      `aws cloudformation deploy ... --parameter-overrides BedrockModelId=<新ID> ...`。
 4. タスクロール(`ecs.yaml` の TaskRole)に当該モデルの `bedrock:InvokeModel*` があることを確認
