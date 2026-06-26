@@ -49,3 +49,9 @@
 - secret はコードに書かない。トークンが露出したら必ずローテーション
   (Slack 再発行 → SSM `--overwrite` → `aws ecs update-service --force-new-deployment`)。
 - 本番は production 扱い。push/デプロイ/外部反映は明示の承認があるときだけ実行する。
+- **CI/ゲート自体の書き換え防止**: `.github/CODEOWNERS` で `.github/`・`ecs.yaml`・`infra/` を
+  所有者の所有にし、ruleset の "require code owner review" を有効化している。承認ゲートや OIDC ロールを
+  書き換える PR は所有者承認なしにはマージできない(コスト承認ゲートは `ecs.yaml` しか見ないので、
+  ゲート定義そのもの=`deploy.yml` はこの CODEOWNERS で守る)。
+- OIDC デプロイロールの信頼は `ref:refs/heads/main` 限定。ブランチや fork の実行・fork PR は
+  AWS 認証情報を取れない(=外部はデプロイ不可)。書き込み権限者は最小限に保つ。

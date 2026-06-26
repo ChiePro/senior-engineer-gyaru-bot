@@ -38,4 +38,12 @@
   承認ステップが素通りする)。
 - 検出範囲の限界: 「お金に関わる変更」= `ecs.yaml` 差分というプロキシ。AWS 側でコンソール直変更したり、
   `ecs.yaml` を介さないコスト要因(例: 別リージョン手動操作)は検出対象外。必要なら検出ファイルを増やす。
+- **ゲートの自己防衛**: 承認ゲートは `deploy.yml` 内にあり、それ自体は「コスト変更」と判定されないため、
+  ゲートを書き換える PR は通常フロー(任意の1承認)で通ってしまう穴がある。これを塞ぐため
+  `.github/CODEOWNERS` で `.github/`・`ecs.yaml`・`infra/` を所有者所有にし、ruleset の
+  "require code owner review" を有効化した。`.github/CODEOWNERS` 自身も `.github/` 配下なので、
+  CODEOWNERS を書き換える PR も所有者承認が要る(自己保護)。Org Owner は ruleset を bypass できる
+  (設計どおり信頼前提)。
+- 補助的防御: OIDC ロールの信頼は `ref:refs/heads/main` 限定で、ブランチ/fork 実行や fork PR は
+  AWS 認証情報を取得できない(外部からのデプロイ・secret 流出を構造的に防ぐ)。
 - 関連: [.claude/rules/deployment.md](../../.claude/rules/deployment.md) / `switch-bedrock-model` スキル。
