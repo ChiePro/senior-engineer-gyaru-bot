@@ -90,6 +90,22 @@ def strip_internal_tags(text: str) -> str:
     return t.strip()
 
 
+_FALSEY = {"false", "0", "no", "off", "none", "null", ""}
+
+
+def as_bool(value) -> bool:
+    """ツール引数の真偽値を頑健に解釈する。
+
+    モデル(特に gpt-oss 系)は bool を文字列 "true"/"false" で渡すことがある。
+    Python の bool("false") は True(非空文字列は全部真)になるため、そのまま
+    使うと cold=false(塩対応の解除)が効かず「謝っても塩対応が治らない」不具合になる。
+    文字列なら "false"/"0"/"no"/"off"/"none"/"null"/空 を偽として扱い、それ以外は bool() に委ねる。
+    """
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSEY
+    return bool(value)
+
+
 _ID_INVALID_RE = re.compile(r"[^a-zA-Z0-9_-]")
 
 
