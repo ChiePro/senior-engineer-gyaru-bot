@@ -22,9 +22,49 @@ env:
   ECS_STACK: gyaru-bot-ecs
 
 jobs:
-  deploy:
-    # CI が失敗/キャンセルのときは動かさない
+  # お金に関わる変更(ecs.yaml: Fargate の CPU/メモリ/タスク数、DynamoDB 課金モード、
+  # Bedrock モデル ID など)が含まれるかを検査する。モデルは ecs.yaml の BedrockModelId が
+  # 単一ソースなので、モデル変更も ecs.yaml の差分として検出される。
+  detect:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      cost_change: ${{ steps.detect.outputs.cost_change }}
+    steps:
+      - name: Checkout the tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+      - name: Detect cost-related changes
+        id: detect
+        run: |
+          # 直前コミットとの差分に ecs.yaml が含まれれば「お金に関わる変更」とみなす。
+          if git diff --name-only HEAD^ HEAD | grep -qx 'ecs.yaml'; then
+            echo "cost_change=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::ecs.yaml changed — production deploy will require manual approval."
+          else
+            echo "cost_change=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # cost_change のときだけ走る承認ゲート。required reviewers 付き environment "production" を
+  # 通ることで、レビュアー(リポジトリ所有者)の Approve があるまでデプロイを止める。
+  approval:
+    needs: detect
+    if: ${{ needs.detect.outputs.cost_change == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "Cost-related change (ecs.yaml) approved by required reviewer."
+
+  deploy:
+    needs: [detect, approval]
+    # detect 成功が前提。approval は「成功 or スキップ(=コスト変更なし)」なら通す。
+    # approval が却下/失敗ならデプロイしない。
+    if: >-
+      ${{ always()
+          && needs.detect.result == 'success'
+          && (needs.approval.result == 'success' || needs.approval.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the tested commit
@@ -57,6 +97,8 @@ jobs:
           echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
       - name: Deploy ECS stack (CloudFormation)
+        # BedrockModelId は渡さない(ecs.yaml の Default が単一ソース)。お金に関わるモデル変更を
+        # ファイル差分として検出・ゲートするため、GitHub 変数ではなく ecs.yaml で管理する。
         run: |
           aws cloudformation deploy \
             --region "$AWS_REGION" \
@@ -68,7 +110,6 @@ jobs:
               "ImageUri=${{ steps.image.outputs.image_uri }}" \
               "MemoryId=${{ secrets.MEMORY_ID }}" \
               "BedrockRegion=${{ vars.BEDROCK_REGION }}" \
-              "BedrockModelId=${{ vars.BEDROCK_MODEL_ID }}" \
               "VpcId=${{ vars.VPC_ID }}" \
               "SubnetIds=${{ vars.SUBNET_IDS }}"
 

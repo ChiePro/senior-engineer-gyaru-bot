@@ -11,6 +11,7 @@
 | [0004](0004-pure-logic-io-separation.md) | 純粋ロジックと I/O を分離しテストを secret 不要にする | Accepted |
 | [0005](0005-single-implementation.md) | DIY/Lambda 二重実装をやめ ECS 単一構成にする | Accepted |
 | [0006](0006-cicd-and-branch-protection.md) | SHA イメージ + SSM secret + OIDC CI/CD + main 保護 | Accepted |
+| [0007](0007-cost-change-approval-gate.md) | お金に関わる変更(ecs.yaml)のデプロイは所有者承認を必須にする | Accepted |
 
 新しい決定は連番を振って追加する。過去の ADR を覆すときは古い方の Status を
 `Superseded by ADR-XXXX` にし、新しい ADR の Context に経緯を書く。

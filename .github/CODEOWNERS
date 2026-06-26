@@ -1,0 +1,20 @@
+# CODEOWNERS — デプロイ/インフラ/コスト設定の「制御プレーン」を所有者レビュー必須にする。
+#
+# 狙い: 承認ゲート(deploy.yml)や OIDC ロール(infra/)・コスト設定(ecs.yaml)を、
+# 書き込み権限者どうしの結託/不注意で書き換えてゲートを骨抜きにされるのを防ぐ。
+# ruleset で "require code owner review" を有効にすることで、これらに触る PR は
+# 下記オーナーの承認なしにはマージできなくなる(通常のコード/docs PR は従来どおり1承認)。
+#
+# 末尾のマッチが優先される(gitignore 形式)。
+
+# CI/CD ワークフローとこの CODEOWNERS 自体
+/.github/        @YusukeOkamoto
+
+# ECS スタック = Fargate サイズ/タスク数・DynamoDB 課金・Bedrock モデル(=お金に関わる設定)
+/ecs.yaml        @YusukeOkamoto
+
+# デプロイ用 OIDC ロール等のブートストラップ
+/infra/          @YusukeOkamoto
+
+# この CODEOWNERS 自体(/.github/ にも含まれるが、骨抜き防止のため明示。最後のマッチが優先)
+/.github/CODEOWNERS  @YusukeOkamoto
