@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# 同一ブランチの古い実行はキャンセルして無駄を省く
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 最小権限
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      # デプロイ対象ファイル(重い依存で import はできないが構文は検査できる)
+      - name: Syntax check (deployable sources)
+        run: python -m compileall -q app.py app_strands.py bot_core.py namespaces.py create_memory.py
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Run tests
+        run: python -m pytest tests/

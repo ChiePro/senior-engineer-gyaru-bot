@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# venv
+.venv/
+venv/
+env/
+
+# 環境変数・シークレット
+.env
+.env.*
+
+# Lambda パッケージング成果物
+package/
+build/
+dist/
+*.zip
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
