@@ -52,3 +52,10 @@ def test_cold_mode_note_is_about_apology_recovery():
     """塩対応注記は『謝られたら解除して戻す』方針を含む。"""
     assert "謝" in persona.COLD_MODE_NOTE
     assert "set_mood" in persona.COLD_MODE_NOTE
+    assert "cold=false" in persona.COLD_MODE_NOTE
+
+
+def test_cold_mode_note_breaks_thread_momentum():
+    """謝罪後はスレッドの過去の塩対応を引きずらない明示があること
+    (解除シグナルが弱く、短期記憶の冷たい履歴に負けて治らない不具合の対策)。"""
+    assert "引きずらない" in persona.COLD_MODE_NOTE
