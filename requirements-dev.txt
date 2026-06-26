@@ -1,0 +1,4 @@
+# テスト・CI 用。bot_core / namespaces / create_memory は重い依存なしで
+# テストできるため、CI では下記だけで lint + 全テストが通る。
+pytest>=8.0.0
+ruff>=0.6.0

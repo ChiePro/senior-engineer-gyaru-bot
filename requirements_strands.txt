@@ -1,0 +1,4 @@
+slack-bolt>=1.20.0
+strands-agents>=1.0.0
+# AgentCore Memory 連携 (短期/長期メモリ)。strands 連携 extra を含める
+bedrock-agentcore[strands-agents]>=0.1.0
