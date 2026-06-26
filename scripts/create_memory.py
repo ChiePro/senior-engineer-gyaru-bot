@@ -1,8 +1,8 @@
 """
-AgentCore Memory リソースを「1度だけ」作成するスクリプト (app_strands.py 用)。
+AgentCore Memory リソースを「1度だけ」作成する運用スクリプト(デプロイ対象外)。
 
-namespace は slackbot.namespaces を単一ソースとして参照する(app_strands.py と同じ定義)。
-実行すると memory_id が出力されるので、それを app_strands.py の MEMORY_ID に設定する。
+namespace は slackbot.namespaces を単一ソースとして参照する(strands_runtime と同じ定義)。
+実行すると memory_id が出力されるので、それを ECS タスクの環境変数 MEMORY_ID に設定する。
 
 TTL (event_expiry_days):
   短期記憶イベント(生の会話ログ)の保持日数。7〜365 日。用途上問題ない最小値に。
@@ -22,7 +22,7 @@ REGION = os.environ.get("BEDROCK_REGION", "us-east-1")
 MEMORY_NAME = os.environ.get("MEMORY_NAME", "SlackBotMemory")
 EVENT_EXPIRY_DAYS = int(os.environ.get("EVENT_EXPIRY_DAYS", "30"))
 
-# strategies は namespaces.py の定義をそのまま使う(app 側 retrieval と単一ソース)
+# strategies は namespaces.py の定義をそのまま使う(strands_runtime の retrieval と単一ソース)
 STRATEGIES = [
     {
         "userPreferenceMemoryStrategy": {
@@ -85,7 +85,7 @@ def main() -> int:
     print("\n=== 作成完了 ===")
     print(f"MEMORY_ID = {memory_id}")
     print(f"TTL(event_expiry_days) = {EVENT_EXPIRY_DAYS} 日")
-    print("\napp_strands.py の環境変数に設定してください:")
+    print("\nECS タスクの環境変数に設定してください:")
     print(f"export MEMORY_ID={memory_id}")
     return 0
 

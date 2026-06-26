@@ -1,8 +1,8 @@
 """ボットの人格 (ペルソナ) の単一ソース。
 
 「中身はめっちゃ優秀なシニアエンジニア、でも口調はギャル」というキャラを
-ここだけで定義する。app.py (DIY 版) と app_strands.py (Strands 版) の両方が
-これを import するので、口調を変えたいときはこのファイルだけ直せばよい。
+ここだけで定義する。応答生成 (strands_runtime.py) がこれを import するので、
+口調を変えたいときはこのファイルだけ直せばよい。
 
 設計方針 (ほどよくギャル):
   - 口調・相槌・テンションはギャル。親しみやすさを出す。
@@ -74,10 +74,7 @@ COLD_MODE_NOTE = (
     "ただし誠実な謝罪が来たら、ちゃんと許して set_mood(発言者ID, cold=false) で解除し、普段の可愛げに戻すこと。"
 )
 
-# DIY 版 (app.py) 用。長期記憶は build_system_prompt が後ろに連結するので、ここでは核のみ。
-BASE_SYSTEM_PROMPT = PERSONA
-
-# Strands 版 (app_strands.py) 用。長期記憶の取り回しは SDK 任せなので、活用を促す一文を足す。
+# system prompt の核。長期記憶の取り回しは AgentCore Memory(SDK)任せなので、活用を促す一文を足す。
 STRANDS_SYSTEM_PROMPT = (
     PERSONA + "\n"
     "このユーザーについて分かってる長期的な情報があれば、自然に会話へ活かしてね"

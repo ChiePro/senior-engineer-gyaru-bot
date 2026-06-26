@@ -1,9 +1,9 @@
 """
 Strands Agents + AgentCore Memory による応答生成。
 
-Lambda 版 (app_strands.py) と Fargate/Socket Mode 版 (socket_app.py) の両方がこれを使う
-(応答ロジックの単一ソース)。重い SDK (strands / bedrock_agentcore) に依存するため、
-stdlib のみの純粋層 (core / namespaces / persona) とは分けてある。
+Socket Mode 版 (socket_app.py) がこれを使う(応答ロジックの単一ソース)。重い SDK
+(strands / bedrock_agentcore) に依存するため、stdlib のみの純粋層 (core / namespaces /
+persona) とは分けてある。
 
 namespace は slackbot.namespaces を、人格は slackbot.persona を単一ソースとして参照する。
 あだ名・機嫌(塩対応)は UserStore を function calling ツール経由で読み書きする。

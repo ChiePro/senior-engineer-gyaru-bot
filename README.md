@@ -1,191 +1,80 @@
-# Slack Bot on Lambda + Bedrock — 最小スケルトン
+# Senior Engineer Gyaru Bot — ECS Fargate + Bedrock
 
 [![CI](https://github.com/ChiePro/senior-engineer-gyaru-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/ChiePro/senior-engineer-gyaru-bot/actions/workflows/ci.yml)
 
-
-`@ボット名 質問` でメンションすると、Bedrock が生成した回答をスレッドに返す
+`@ボット名 質問` でメンションすると、Amazon Bedrock が生成した回答をスレッドに返す
 社内向け Slack ボットの最小構成です。
 
 中身はシニアエンジニア、でも口調はギャル — というキャラ付け(ほどよくギャル)を
-してあります。技術的な内容・コード・コマンドは正確に保ちつつ、相槌や語尾だけ
+してあります。技術的な内容・コード・コマンドは正確に保ちつつ、地の口調だけ
 フランクにします。口調を変えたい/真面目なアシスタントに戻したいときは
-`slackbot/persona.py` を編集するだけ(DIY 版・Strands 版の両方に効きます)。
+`slackbot/persona.py` を編集するだけです。
+
+**ECS Fargate 上に常駐し、Slack Socket Mode で動きます。** 公開エンドポイント・
+API Gateway・URL 検証・Lambda のコールドスタートはいずれも不要です。
 
 ## ディレクトリ構成
 
 ```
-slackbot/            # Lambda にデプロイする本体パッケージ
-  core.py            # I/O を持たない純粋ロジック(会話整形・記憶注入・制御フロー)
-  namespaces.py      # AgentCore namespace の単一ソース(登録側と検索側の食い違い防止)
-  persona.py         # 口調(ギャル人格)の単一ソース ← キャラ変更はここだけ
-  app.py             # DIY 版ハンドラ        → handler: slackbot.app.handler
-  app_strands.py     # Strands 版ハンドラ    → handler: slackbot.app_strands.handler
+slackbot/              # ECS コンテナに載せる本体パッケージ
+  core.py              # I/O を持たない純粋ロジック(メンション整形・人物注記・タグ除去・ID整形)
+  namespaces.py        # AgentCore namespace の単一ソース(登録側と検索側の食い違い防止)
+  persona.py           # 口調(ギャル人格)の単一ソース ← キャラ変更はここだけ
+  user_store.py        # あだ名・特徴・機嫌を対象ユーザーID単位で持つ DynamoDB ストア
+  strands_runtime.py   # 応答生成(Strands Agent + AgentCore Memory + function calling ツール)
+  socket_app.py        # Socket Mode 常駐エントリ → python -m slackbot.socket_app
 scripts/
-  create_memory.py   # AgentCore Memory を1度だけ作る運用スクリプト(デプロイ不要)
-tests/               # 重い依存なしで動く単体・シナリオ・ペルソナテスト
+  create_memory.py     # AgentCore Memory を1度だけ作る運用スクリプト(デプロイ対象外)
+ecs.yaml               # ECS Fargate スタック(CloudFormation)
+Dockerfile.fargate     # 常駐コンテナのイメージ
+infra/
+  github-oidc-bootstrap.yaml  # GitHub OIDC + デプロイ用 IAM ロール(初回1度だけ)
+.github/workflows/     # ci.yml(lint+test)/ deploy.yml(build→push→deploy)
+tests/                 # 重い依存なしで動く単体・ペルソナテスト
 ```
-
-## 構成は2系統
-
-このリポジトリには2つの実装があります。用途で選んでください。
-
-| | `app.py` (DIY 版) | `app_strands.py` (Strands 版) |
-|---|---|---|
-| 短期記憶 | スレッド履歴を手動取得 | session_id にスレッドを渡すだけ |
-| 長期記憶 | DynamoDB + 自前の抽出プロンプト | actor_id にユーザーを渡すだけ (自動抽出) |
-| 依存 | boto3, slack-bolt のみ (軽量) | strands-agents, bedrock-agentcore (重め) |
-| 追加コスト | DynamoDB (ほぼ無料) | AgentCore Memory (従量課金の managed サービス) |
-| 向き | とにかく安く最小で始めたい | 設計を綺麗に保ち拡張していきたい |
-
-以下のセットアップ手順は主に DIY 版 (`app.py`) のものです。
-Strands 版の追加手順は末尾「Strands 版セットアップ」を参照。
 
 ## アーキテクチャ
 
 ```
-Slack ── Event ──> API Gateway ──> Lambda(slackbot.app.handler)
-                                      │ 1. ack() を即返す(3秒ルール対策)
-                                      │ 2. 自分自身を非同期invoke (lazy listener)
-                                      └─> 2回目のinvoke: Bedrock呼び出し → chat.postMessage
+Slack ──(outbound WebSocket / Socket Mode)── ECS Fargate Service(常時1タスク)
+                                                  python -m slackbot.socket_app
+                                                  └─> Bedrock(応答生成)
+                                                  └─> AgentCore Memory(長期記憶)
+                                                  └─> DynamoDB(あだ名・特徴・機嫌)
 ```
 
-非同期の再invoke (lazy listener) を使うため、**Lambda は自分自身を invoke できる
-IAM 権限が必要**です。これがないと回答が返りません。
-
-## 1. Slack アプリの作成
-
-1. https://api.slack.com/apps で「Create New App」(From scratch)
-2. **OAuth & Permissions** > Bot Token Scopes に以下を追加
-   - `app_mentions:read`
-   - `chat:write`
-   - `channels:history` (スレッド履歴の取得に必要 / マルチターン用)
-   - `groups:history` (プライベートチャンネルでも使う場合)
-3. ワークスペースにインストールして **Bot User OAuth Token** (`xoxb-...`) を取得
-4. **Basic Information** > **Signing Secret** を控える
-5. **Event Subscriptions** を ON にし、Subscribe to bot events に `app_mention` を追加
-   - Request URL は後述のデプロイ後の API Gateway URL を設定
-     (URL検証のため先にデプロイしておく)
-
-## 2. パッケージング & デプロイ
-
-依存込みで ZIP を作る例:
-
-```bash
-pip install -r requirements.txt -t ./package
-cp -r slackbot ./package/        # パッケージごと同梱(core/persona/namespaces を含む)
-cd package && zip -r ../function.zip . && cd ..
-```
-
-この `function.zip` を Lambda にアップロードし、ハンドラを `slackbot.app.handler` に設定。
-ランタイムは Python 3.12 以降を推奨。タイムアウトは 30 秒程度に。
-
-> SAM / CDK / Serverless Framework を使う場合も、ハンドラ `slackbot.app.handler` と
-> 下記の環境変数・IAM 権限は共通です。
-
-## 3. 環境変数
-
-| キー | 例 | 説明 |
-|------|-----|------|
-| `SLACK_BOT_TOKEN` | `xoxb-...` | Bot User OAuth Token |
-| `SLACK_SIGNING_SECRET` | `abc123...` | 署名検証用 |
-| `BEDROCK_REGION` | `us-east-1` | 使いたいモデルがあるリージョン |
-| `BEDROCK_MODEL_ID` | `us.amazon.nova-micro-v1:0` | 応答用モデル。Bedrock コンソールで要確認 |
-| `MEMORY_MODEL_ID` | `us.amazon.nova-micro-v1:0` | (任意) 長期記憶の抽出用。未指定なら `BEDROCK_MODEL_ID`。安価モデル推奨 |
-| `MEMORY_TABLE` | `slackbot-user-memory` | 長期記憶を保存する DynamoDB テーブル名 |
-
-## 4. IAM 権限 (Lambda 実行ロール)
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["bedrock:InvokeModel"],
-      "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["lambda:InvokeFunction"],
-      "Resource": "arn:aws:lambda:*:*:function:<この関数名>"
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["dynamodb:GetItem", "dynamodb:PutItem"],
-      "Resource": "arn:aws:dynamodb:*:*:table/<MEMORY_TABLE>"
-    }
-  ]
-}
-```
-
-`lambda:InvokeFunction` は lazy listener が自分を再呼び出しするために必須。
-`dynamodb:GetItem/PutItem` は長期記憶の読み書きに必要。
-`Resource` は本番ではそれぞれの ARN に絞ってください。
-
-## 5. DynamoDB テーブル (長期記憶)
-
-オンデマンド課金で作成すると、低トラフィックではほぼ無料。
-
-```bash
-aws dynamodb create-table \
-  --table-name slackbot-user-memory \
-  --attribute-definitions AttributeName=user_id,AttributeType=S \
-  --key-schema AttributeName=user_id,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST
-```
-
-- パーティションキー `user_id` (Slack のユーザーID) に対し、属性 `memory` (テキスト) を保存。
-- 短期記憶はスレッド側に残るので DB には入れない。長期記憶だけここに置く。
-
-## 6. モデルの有効化
-
-Bedrock コンソール > **モデルアクセス** で使いたいモデルを有効化してから
-`BEDROCK_MODEL_ID` を設定します。最新モデルは US リージョンが先行するため、
-東京リージョンで未提供ならクロスリージョン推論プロファイル(`us.` 始まりのID)を利用。
+- **Socket Mode** は Slack へ outbound の WebSocket を張る方式。受信用の公開 URL が要らないので、
+  API Gateway・URL 検証・署名検証(signing secret)・Lambda の自己 invoke がすべて不要。
+- **ECS Fargate** で常駐するためコールドスタートが無く、Slack の 3 秒ルールに常に間に合う。
+- Socket Mode は 1 接続 = 1 タスク前提なので、サービスは **desiredCount=1**、デプロイは
+  「旧タスクを止めてから新タスクを起動」(二重接続を避ける)。
+- default VPC の public subnet + `assignPublicIp` で outbound するだけなので、ALB / NAT は不要。
 
 ## メモリ構造
 
-- **短期記憶**: Slack スレッドの会話履歴。`conversations.replies` で都度読み直すだけで、
-  DB に保存しない。スレッドが続く限り文脈が引き継がれる。
-- **長期記憶**: ユーザーごとの趣味嗜好・性格などを DynamoDB に永続化。
-  メンション時に system prompt へ注入し、返信後に今回の発言から抽出・統合して保存する。
-  抽出は別の(安価な)モデル呼び出しで行われるため、1 ターンあたり Bedrock 呼び出しが
-  2 回になる点に注意(コストを抑えたい場合は下記の「拡張の足がかり」参照)。
+- **短期記憶(スレッド単位)**: AgentCore Memory の `session_id` = スレッド `thread_ts`。
+  同じスレッドの文脈が引き継がれ、別スレッドとは混ざらない。
+- **長期記憶(人単位・横断)**: AgentCore Memory の `actor_id` = Slack ユーザーID。
+  趣味嗜好・事実が自動抽出され、別スレッド・別日でも本人に紐づいて引き継がれる。
+- **あだ名・特徴・機嫌(横断・ワークスペース共有)**: DynamoDB に **対象ユーザーID** をキーで保存。
+  「その人がどういう人か」はワークスペース全員で共有される情報なので、発言者単位の AgentCore
+  メモリではなくここに置く。モデルは function calling ツール(`set_nickname` / `remember_about` /
+  `set_mood`)経由で読み書きする。
 
-## 拡張の足がかり
+## 1. Slack アプリの作成(Socket Mode)
 
-- **記憶更新の頻度を下げる**: 今は毎ターン長期記憶を更新している。コスト削減のため、
-  数ターンに 1 回だけ更新する / 一定文字数を超えた発言のみ対象にする等が有効。
-- **記憶のTTL・上限管理**: `MAX_MEMORY_CHARS` で頭打ちにしているが、古い項目の整理や
-  TTL 属性での自動失効を入れると肥大化を防げる。
-- **記憶の確認・編集コマンド**: 「何を覚えてる?」で現在の長期記憶を表示、
-  「忘れて」で削除、といったコマンドを足すと運用しやすい。
-- **モデル切り替え**: Converse API なので `BEDROCK_MODEL_ID` を変えるだけ。
-  応答は安価な Nova Micro / Claude Haiku で始め、必要なら Sonnet 系へ。
-- **DM 対応**: `message.im` イベントを追加(`im:history`, `im:read` スコープも要追加)。
+1. https://api.slack.com/apps で「Create New App」(From scratch)。App 名が Slack 上の表示名になる。
+2. **Socket Mode** を ON にする。
+3. **OAuth & Permissions** > Bot Token Scopes に追加:
+   - `app_mentions:read`
+   - `chat:write`
+4. **Event Subscriptions** を ON にし、Subscribe to bot events に `app_mention` を追加
+   (Socket Mode なので Request URL の設定は不要)。
+5. ワークスペースにインストールして **Bot User OAuth Token**(`xoxb-...`)を取得。
+6. **Basic Information** > App-Level Tokens で、スコープ `connections:write` の
+   **App-Level Token**(`xapp-...`)を発行する(Socket Mode の接続に必須)。
 
----
-
-## Strands 版セットアップ (`app_strands.py`)
-
-DIY 版の Slack アプリ作成・デプロイ・3秒ルール対策はそのまま流用できます。
-差分は「DynamoDB の代わりに AgentCore Memory を使う」点です。
-
-### 1. 依存
-
-```bash
-pip install -r requirements_strands.txt -t ./package
-cp -r slackbot ./package/        # ハンドラは slackbot.app_strands.handler
-```
-
-Strands + AgentCore は依存が大きく Lambda の ZIP サイズ上限に当たりやすいので、
-**Lambda レイヤー** または **コンテナイメージ** でのデプロイを検討してください。
-
-### 2. AgentCore Memory リソースを1度だけ作成
-
-付属の `scripts/create_memory.py` を実行します。嗜好・事実・要約の3戦略と、各 namespace、
-短期記憶イベントの TTL を明示してあり、`app_strands.py` の `retrieval_config` と
-namespace が一致するように作ってあります。
+## 2. AgentCore Memory を1度だけ作成
 
 ```bash
 pip install bedrock-agentcore
@@ -193,91 +82,95 @@ pip install bedrock-agentcore
 BEDROCK_REGION=us-east-1 EVENT_EXPIRY_DAYS=30 python -m scripts.create_memory
 ```
 
-実行すると `MEMORY_ID = ...` が出力されるので、その値を `app_strands.py` の
-環境変数 `MEMORY_ID` に設定します。
+実行すると `MEMORY_ID = ...` が出力されるので、その値を後述の `MEMORY_ID` に設定します。
+3 戦略(嗜好・事実・要約)と各 namespace、短期記憶イベントの TTL(`EVENT_EXPIRY_DAYS`, 7〜365日)を
+明示してあり、`strands_runtime.py` の `retrieval_config` と namespace が一致するように作られています。
 
-namespace の対応(`scripts/create_memory.py` と `slackbot/app_strands.py` が `slackbot/namespaces.py` で一致):
-
-| 戦略 | namespace | app 側の用途 |
+| 戦略 | namespace | 用途 |
 |------|-----------|------|
-| userPreferenceMemoryStrategy | `/users/{actorId}/preferences/` | 趣味嗜好・性格 (retrieval 対象) |
-| semanticMemoryStrategy | `/users/{actorId}/facts/` | 事実情報 (retrieval 対象) |
-| summaryMemoryStrategy | `/users/{actorId}/summaries/{sessionId}/` | スレッド要約 (保存のみ) |
+| userPreferenceMemoryStrategy | `/users/{actorId}/preferences/` | 趣味嗜好・性格(retrieval 対象) |
+| semanticMemoryStrategy | `/users/{actorId}/facts/` | 事実情報(retrieval 対象) |
+| summaryMemoryStrategy | `/users/{actorId}/summaries/{sessionId}/` | スレッド要約(保存のみ) |
 
-> namespace は末尾スラッシュまで含めて完全一致させること。`{actorId}` は実行時に
-> Slack ユーザーIDへ置換される。ここが食い違うと長期記憶が検索でヒットしません。
+> namespace は末尾スラッシュまで含めて完全一致させること。食い違うと長期記憶が検索でヒットしません。
+> `tests/test_unit.py` が登録側(create_memory)と検索側(namespaces)の一致を検査しています。
 
-`EVENT_EXPIRY_DAYS` が短期記憶イベントの保持日数(TTL, 7〜365日)です。
-長期記憶レコードは抽出後も残るため、肥大化が気になる場合は定期的なレコード整理を別途検討してください。
+## 3. シークレットを SSM Parameter Store に格納
 
-### 3. 環境変数 (Strands 版)
+Slack のトークンは SSM の SecureString に置き、ECS タスクが起動時に解決します(CI には渡しません)。
+
+```bash
+aws ssm put-parameter --name /gyaru-bot/SLACK_BOT_TOKEN --type SecureString --value "xoxb-..."
+aws ssm put-parameter --name /gyaru-bot/SLACK_APP_TOKEN --type SecureString --value "xapp-..."
+# 値を更新するときは --overwrite を付ける
+```
+
+> スケルトン簡略化のため SSM 直参照にしています。本番では Secrets Manager + ローテーションを検討してください。
+
+## 4. 環境変数(ECS タスク)
+
+`ecs.yaml` がタスク定義に流し込みます(トークンは SSM 由来の Secrets、他は通常の環境変数)。
 
 | キー | 例 | 説明 |
 |------|-----|------|
-| `SLACK_BOT_TOKEN` | `xoxb-...` | DIY 版と同じ |
-| `SLACK_SIGNING_SECRET` | `...` | DIY 版と同じ |
-| `BEDROCK_REGION` | `us-east-1` | モデル/Memory のリージョン |
-| `BEDROCK_MODEL_ID` | `us.amazon.nova-micro-v1:0` | 応答用モデル |
+| `SLACK_BOT_TOKEN` | `xoxb-...` | Bot User OAuth Token(SSM 由来) |
+| `SLACK_APP_TOKEN` | `xapp-...` | App-Level Token(Socket Mode 接続用 / SSM 由来) |
+| `BEDROCK_REGION` | `us-east-1` | モデル / Memory のリージョン |
+| `BEDROCK_MODEL_ID` | `openai.gpt-oss-120b-1:0` | 応答用モデル |
 | `MEMORY_ID` | `SlackBotMemory-xxxxx` | 手順2で作成した Memory のID |
+| `USER_TABLE` | (自動) | あだ名・特徴・機嫌を保存する DynamoDB テーブル名(`ecs.yaml` が作成) |
 
-`MEMORY_TABLE` / `MEMORY_MODEL_ID` は Strands 版では不要です。
+## 5. デプロイ(CloudFormation)
 
-### 4. IAM 権限 (Strands 版で追加)
+イメージを ECR に push し、`ecs.yaml` をデプロイします。`ImageUri` は commit SHA タグ推奨
+(TaskDefinition が変わり ECS が自動ローリングする)。
 
-`dynamodb:*` の代わりに AgentCore Memory への権限が必要です。
+```bash
+REPO=<account>.dkr.ecr.us-east-1.amazonaws.com/gyaru-bot
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "${REPO%/*}"
+docker build --platform linux/amd64 -f Dockerfile.fargate -t "${REPO}:$(git rev-parse HEAD)" .
+docker push "${REPO}:$(git rev-parse HEAD)"
 
-```json
-{
-  "Effect": "Allow",
-  "Action": [
-    "bedrock-agentcore:CreateEvent",
-    "bedrock-agentcore:ListEvents",
-    "bedrock-agentcore:RetrieveMemoryRecords"
-  ],
-  "Resource": "arn:aws:bedrock-agentcore:*:*:memory/<MEMORY_ID>"
-}
+aws cloudformation deploy \
+  --template-file ecs.yaml --stack-name gyaru-bot-ecs --capabilities CAPABILITY_IAM \
+  --parameter-overrides \
+    "ImageUri=${REPO}:$(git rev-parse HEAD)" \
+    "MemoryId=SlackBotMemory-xxxxx" \
+    "BedrockRegion=us-east-1" "BedrockModelId=openai.gpt-oss-120b-1:0" \
+    "VpcId=vpc-xxxx" "SubnetIds=subnet-a,subnet-b"
 ```
 
-> アクション名・リソース形式は SDK / サービスのバージョンで変わりうるため、
-> 最新のドキュメントで確認してください。
+`ecs.yaml` は LogGroup / DynamoDB ユーザーテーブル / Cluster / 実行・タスクロール /
+egress-only セキュリティグループ / TaskDefinition / Service(desiredCount=1, assignPublicIp)を作ります。
 
-### 補足
+## 6. モデルの有効化
 
-- `actor_id` = Slack ユーザーID にすることで長期記憶が「人」に紐づき、
-  別スレッド・別日でも本人の嗜好が引き継がれます。
-- `session_id` = スレッド `thread_ts` にすることで短期記憶がスレッド単位になります。
-- 長期記憶の抽出はバックグラウンド処理なので、直後の会話には即反映されないことがあります。
-- Strands と AgentCore は更新が速いため、`AgentCoreMemoryConfig` / `RetrievalConfig` の
-  パラメータ名はインストール版のドキュメントで確認してください。
-
----
+Bedrock のモデルは初回 InvokeModel 時に自動で有効化されます(モデルアクセスページは廃止)。
+最新モデルは US リージョンが先行するため、`BEDROCK_REGION=us-east-1` 推奨。クロスリージョン推論
+プロファイル(`us.` 始まりのID)も利用できます。Anthropic のモデルはユースケース申請フォームの
+提出が必要な場合があります。
 
 ## CI/CD(自動デプロイ)
 
 `main` への push で **CI(lint + test)→ 成功したら自動で本番デプロイ** が走ります。
-デプロイ対象は **Strands 版**(`slackbot.app_strands.handler`)で、依存が重いため
-**コンテナイメージ**として AWS SAM でデプロイします。
 
 | ファイル | 役割 |
 |---|---|
-| `Dockerfile` | Strands 版のコンテナイメージ(`requirements_strands.txt` + `slackbot/`) |
-| `template.yaml` | SAM テンプレート。Lambda(コンテナ)+ API Gateway + IAM を定義 |
-| `samconfig.toml` | スタック名・S3/ECR 自動解決などのデプロイ既定値 |
+| `.github/workflows/ci.yml` | `compileall` + `ruff` + `pytest`(秘密情報不要) |
+| `.github/workflows/deploy.yml` | OIDC で assume → ECR build/push → `cloudformation deploy ecs.yaml` → `ecs wait services-stable` |
 | `infra/github-oidc-bootstrap.yaml` | GitHub OIDC プロバイダ + デプロイ用 IAM ロール(初回1度だけ) |
-| `.github/workflows/deploy.yml` | CI 成功後に OIDC で assume → `sam build && sam deploy` |
-
-### フロー
+| `Dockerfile.fargate` | 常駐コンテナのイメージ(`requirements_strands.txt` + `slackbot/`) |
+| `ecs.yaml` | ECS Fargate スタック本体 |
 
 ```
-push (main) ──> CI (ci.yml: compileall + ruff + pytest)
+push (main) ──> CI (compileall + ruff + pytest)
                    │ success
-                   └─> Deploy (deploy.yml, workflow_run)
+                   └─> Deploy (workflow_run)
                          OIDC で IAM ロールを assume
-                         sam build (Docker でイメージ作成)
-                         sam deploy (CloudFormation でスタック更新)
+                         docker build --platform linux/amd64(SHA タグ)→ ECR push
+                         cloudformation deploy ecs.yaml(ImageUri=…:SHA)
+                         ecs wait services-stable(ローリング完了待ち)
 ```
-
-CI が失敗したコミットはデプロイされません(`deploy.yml` は CI の成功時のみ起動)。
 
 ### 初回セットアップ
 
@@ -288,86 +181,54 @@ CI が失敗したコミットはデプロイされません(`deploy.yml` は CI
      --template-file infra/github-oidc-bootstrap.yaml \
      --stack-name gyaru-bot-oidc \
      --capabilities CAPABILITY_NAMED_IAM \
-     --parameter-overrides GitHubOrg=ChiePro GitHubRepo=senior-engineer-gyaru-bot
-   # 出力 RoleArn を控える。
-   # 既に token.actions.githubusercontent.com の OIDC プロバイダがある場合は
-   # 末尾に CreateOIDCProvider=false を足す。
+     --parameter-overrides GitHubOrg=ChiePro GitHubRepo=senior-engineer-gyaru-bot DeployStackName=gyaru-bot-ecs
+   # 出力 RoleArn を控える。既に OIDC プロバイダがある場合は CreateOIDCProvider=false を足す。
    ```
 
-2. **AgentCore Memory を作成**して `MEMORY_ID` を取得(「Strands 版セットアップ」手順2)。
+2. **AgentCore Memory を作成**して `MEMORY_ID` を取得(手順2)、**SSM にトークンを格納**(手順3)。
 
 3. **GitHub に変数とシークレットを登録**(Settings > Secrets and variables > Actions):
 
    | 種別 | キー | 例 / 説明 |
    |------|------|-----------|
    | Variables | `AWS_DEPLOY_ROLE_ARN` | 手順1の出力 RoleArn |
-   | Variables | `AWS_REGION` | デプロイ先リージョン (例 `us-east-1`) |
-   | Variables | `BEDROCK_REGION` | Bedrock/Memory のリージョン |
-   | Variables | `BEDROCK_MODEL_ID` | 例 `us.amazon.nova-micro-v1:0` |
-   | Secrets | `SLACK_BOT_TOKEN` | `xoxb-...` |
-   | Secrets | `SLACK_SIGNING_SECRET` | 署名シークレット |
+   | Variables | `AWS_REGION` | デプロイ先リージョン(例 `us-east-1`) |
+   | Variables | `BEDROCK_REGION` | Bedrock / Memory のリージョン |
+   | Variables | `BEDROCK_MODEL_ID` | 例 `openai.gpt-oss-120b-1:0` |
+   | Variables | `ECR_REPOSITORY` | ECR リポジトリ名(例 `gyaru-bot`) |
+   | Variables | `VPC_ID` | タスクを置く VPC(default VPC でよい) |
+   | Variables | `SUBNET_IDS` | public subnet をカンマ区切りで2つ以上 |
    | Secrets | `MEMORY_ID` | 手順2で作成した Memory のID |
 
-4. `main` に push。デプロイ後、スタック出力 `SlackRequestUrl` を Slack の
-   **Event Subscriptions** の Request URL に設定する(`sam list stack-outputs`
-   または CloudFormation コンソールで確認)。
+4. `main` に push すると CI → Deploy が走り、ECS サービスがローリング更新されます。
 
-### ローカルから手動デプロイ
+## ペルソナのカスタマイズ
 
-```bash
-sam build
-sam deploy --parameter-overrides \
-  "SlackBotToken=xoxb-..." "SlackSigningSecret=..." \
-  "BedrockRegion=us-east-1" "BedrockModelId=us.amazon.nova-micro-v1:0" "MemoryId=..."
-```
+口調・性格・ふるまいは `slackbot/persona.py` に集約しています。
 
-> 秘密情報は現状 Lambda 環境変数として渡しています(スケルトン簡略化のため)。
-> 本番では Secrets Manager / SSM Parameter Store への移行を検討してください。
-
-### コールドスタートについて
-
-Strands 版はコンテナ + 重い依存(`strands-agents` / `bedrock-agentcore`)のため、
-コールドスタートの初期化が重く、Slack の3秒ルール(URL 検証・初回メンション)に
-間に合わないことがあります。`template.yaml` では `MemorySize: 2048` にして CPU を増やし、
-import を高速化することで INIT タイムアウトを回避しています(初回はウォームになるまで
-Slack 側の「Retry」や再送が必要になる場合あり)。
-
-> **Provisioned Concurrency(常時ウォーム)が本来の対策**ですが、Lambda の同時実行上限が
-> 既定の `10` のままだと「未予約を最低10残す」制約に当たり確保できません。使う場合は先に
-> Service Quotas で Lambda の「Concurrent executions」上限を引き上げ、`template.yaml` に
-> `AutoPublishAlias: live` と `ProvisionedConcurrencyConfig` を足してください。
->
-> 恒久的に綺麗にするなら、長時間起動の **ECS Fargate + Slack Socket Mode** へ寄せると
-> API Gateway・URL 検証・コールドスタートの問題自体が無くなります。
-
----
+- `PERSONA` — キャラの核。基本レジスターは常にタメ口だが、コード・コマンド・値などの
+  「中身」は崩さず正確に保つ、というガードレール付き。
+- `BEHAVIOR_GUIDE` — あだ名 / 特徴 / 機嫌(塩対応)ツールの使い方。保存は宣言せず裏方で行う方針。
+- `COLD_MODE_NOTE` — 失礼を言われた相手にだけ塩対応し、誠実な謝罪で解除する注記。
+- `FALLBACK_MESSAGE` — 応答生成に失敗したときの、キャラを保った返信。
 
 ## テスト
 
-純粋ロジックは `slackbot/core.py` / `slackbot/namespaces.py` に、口調は `slackbot/persona.py` に
-分離してあり、boto3・slack・strands をインストールしなくても検証できます
-(これらに依存する import は遅延化/分離済み)。
+純粋ロジックは `slackbot/core.py` / `slackbot/namespaces.py`、口調は `slackbot/persona.py` に
+分離してあり、boto3・slack・strands をインストールしなくても検証できます(重い依存は
+`strands_runtime` / `socket_app` / `user_store` 側に隔離済み)。
 
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 ```
 
-- `tests/test_unit.py` — 単体テスト
-  - メンション除去、Slack リトライ判定
-  - `build_conversation`: role 交互化・連続結合・先頭 assistant 除去・subtype/空除外・履歴上限・空フォールバック
-  - `build_system_prompt`: 長期記憶の有無による分岐
-  - namespace: `resolve` の置換、末尾スラッシュ、**登録側(create_memory)と検索側(app)の一致**
-- `tests/test_scenario.py` — シナリオテスト(マルチターン会話)
-  - ターンをまたいだ長期記憶の蓄積と system prompt への注入
-  - スレッド単位の短期記憶分離(別スレッドに履歴が混ざらない)
-  - 「返信が先・長期記憶更新が後」の順序保証
-  - 履歴上限で切り詰めても Converse 制約(user 始まり・role 交互)を維持
-- `tests/test_persona.py` — ペルソナ(ギャル口調)
-  - 口調マーカーと技術的正確さのガードレールが両立していること
-  - DIY 版 base prompt = ペルソナ核、Strands 版 = ペルソナ核 + 長期記憶活用の一文
-  - `build_system_prompt` でペルソナに長期記憶が連結されること
+- `tests/test_unit.py` — メンション整形(`strip_bot_mention` / `mentioned_user_ids`)、
+  壊れたツール引数の救済(`normalize_slack_id`)、人物注記(`build_people_note`)、
+  内部タグ除去(`strip_internal_tags`)、AgentCore ID 整形(`safe_id`)、
+  namespace 整合(登録側と検索側の一致)。
+- `tests/test_persona.py` — ギャル口調マーカーと技術的正確さのガードレールの両立、
+  Strands 用プロンプトが核 + 長期記憶活用の一文になっていること、ツール名がガイドに揃っていること。
 
-> 注: Strands 版 `app_strands.py` の応答生成自体は SDK と AgentCore Memory に委譲されるため、
-> ここでは namespace 整合・メンション除去・リトライ判定など app 側ロジックを検証します。
-> SDK 連携の動作確認は実環境(Memory リソース作成後)での結合テストで行ってください。
+> 応答生成自体は Strands SDK と AgentCore Memory に委譲されるため、SDK 連携の動作確認は
+> 実環境(Memory リソース作成後)での結合テストで行ってください。

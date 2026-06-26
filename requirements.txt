@@ -1,3 +1,0 @@
-# Bedrock Converse API を確実に使えるよう、ある程度新しい boto3 を指定
-boto3>=1.35.0
-slack-bolt>=1.20.0
