@@ -28,7 +28,8 @@ Parameters:
 Globals:
   Function:
     Timeout: 30
-    MemorySize: 512
+    # Strands/AgentCore の import は重い。メモリを増やすと CPU も増え import が速くなる。
+    MemorySize: 2048
 
 Resources:
   SlackBotFunction:
@@ -39,6 +40,11 @@ Resources:
       PackageType: Image
       Architectures:
         - x86_64
+      # コールドスタートで Slack の3秒ルールに間に合わないため、バージョンを発行して
+      # エイリアス live に Provisioned Concurrency を1つ張り、常に温めておく。
+      AutoPublishAlias: live
+      ProvisionedConcurrencyConfig:
+        ProvisionedConcurrentExecutions: 1
       Environment:
         Variables:
           SLACK_BOT_TOKEN: !Ref SlackBotToken
@@ -54,11 +60,14 @@ Resources:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
               Resource: "*"
-        # 2) lazy listener が自分自身を非同期 invoke するための自己 invoke 権限
+        # 2) lazy listener が自分自身を非同期 invoke するための自己 invoke 権限。
+        #    AutoPublishAlias 使用時は alias 修飾された ARN で呼ばれるため :* も許可する。
         - Statement:
             - Effect: Allow
               Action: lambda:InvokeFunction
-              Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-bot"
+              Resource:
+                - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-bot"
+                - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-bot:*"
         # 3) AgentCore Memory の短期/長期メモリ操作(MEMORY_ID に限定)
         - Statement:
             - Effect: Allow
