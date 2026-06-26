@@ -19,7 +19,13 @@ from bedrock_agentcore.memory.integrations.strands.session_manager import (
     AgentCoreMemorySessionManager,
 )
 
-from slackbot.core import safe_id, build_people_note, strip_internal_tags, normalize_slack_id
+from slackbot.core import (
+    safe_id,
+    build_people_note,
+    strip_internal_tags,
+    normalize_slack_id,
+    as_bool,
+)
 from slackbot.namespaces import NS_PREFERENCES, NS_FACTS, resolve
 from slackbot.persona import STRANDS_SYSTEM_PROMPT, BEHAVIOR_GUIDE, COLD_MODE_NOTE
 
@@ -60,7 +66,7 @@ def _build_tools(store, speaker_id: str):
 
         cold=true で塩対応開始(失礼を言われたとき)、cold=false で解除(謝られたとき)。
         """
-        store.set_cold(normalize_slack_id(user_id) or speaker_id, cold)
+        store.set_cold(normalize_slack_id(user_id) or speaker_id, as_bool(cold))
         return "ok"
 
     return [set_nickname, remember_about, set_mood]
