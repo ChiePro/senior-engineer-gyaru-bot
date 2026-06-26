@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  senior-engineer-gyaru-bot (Strands 版) — ECS Fargate 上の常駐 Socket Mode ワーカー。
+  Slack へ outbound WebSocket を張るだけなので公開エンドポイント / ALB / NAT は不要。
+  default VPC の public subnet + assignPublicIp で outbound 通信する。
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: ECR のイメージ URI(タグ付き)
+  MemoryId:
+    Type: String
+    Description: AgentCore Memory のID
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+  BedrockModelId:
+    Type: String
+    # OpenAI gpt-oss-120b。20b はペルソナ無視・話者取り違え・反復が出たため上位へ。
+    # 最高品質を狙うなら Claude Haiku 4.5(要ユースケース申請)も候補。
+    Default: openai.gpt-oss-120b-1:0
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: タスクを置く VPC(default VPC でよい)
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: public subnet を2つ以上(default VPC のもの)
+  Cpu:
+    Type: String
+    Default: "512"
+    Description: Fargate タスクの CPU(512 = 0.5 vCPU)
+  Memory:
+    Type: String
+    Default: "1024"
+    Description: Fargate タスクのメモリ(MiB)
+  SlackBotTokenParam:
+    Type: String
+    Default: /gyaru-bot/SLACK_BOT_TOKEN
+    Description: SSM Parameter Store (SecureString) の名前。xoxb-... を格納
+  SlackAppTokenParam:
+    Type: String
+    Default: /gyaru-bot/SLACK_APP_TOKEN
+    Description: SSM Parameter Store (SecureString) の名前。xapp-... を格納
+
+Resources:
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}"
+      RetentionInDays: 14
+
+  # あだ名・機嫌(塩対応)を対象ユーザーID単位で持つ KVS
+  UserTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref AWS::StackName
+
+  # コンテナ起動時に ECR pull・ログ送信・SSM シークレット解決を行うロール
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: read-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameters
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackBotTokenParam}"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackAppTokenParam}"
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: "*"
+
+  # コンテナ内のアプリ(Bedrock / AgentCore Memory)が使うロール
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: bot-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateEvent
+                  - bedrock-agentcore:ListEvents
+                  - bedrock-agentcore:RetrieveMemoryRecords
+                Resource: !Sub "arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:memory/${MemoryId}"
+              # あだ名・機嫌ストア(ユーザー単位 KVS)
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt UserTable.Arn
+
+  # outbound のみ(Socket Mode は inbound 不要)
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: gyaru-bot Fargate task (egress only)
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: allow all outbound
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref AWS::StackName
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: bot
+          Image: !Ref ImageUri
+          Essential: true
+          Environment:
+            - Name: BEDROCK_REGION
+              Value: !Ref BedrockRegion
+            - Name: BEDROCK_MODEL_ID
+              Value: !Ref BedrockModelId
+            - Name: MEMORY_ID
+              Value: !Ref MemoryId
+            - Name: USER_TABLE
+              Value: !Ref UserTable
+          Secrets:
+            - Name: SLACK_BOT_TOKEN
+              ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackBotTokenParam}"
+            - Name: SLACK_APP_TOKEN
+              ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackAppTokenParam}"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: bot
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Ref AWS::StackName
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      # Socket Mode は1接続=1タスク前提。ローリング時に二重接続させない。
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !GetAtt ServiceSecurityGroup.GroupId
+
+Outputs:
+  ClusterName:
+    Value: !Ref Cluster
+  ServiceName:
+    Value: !GetAtt Service.Name
+  LogGroup:
+    Value: !Ref LogGroup

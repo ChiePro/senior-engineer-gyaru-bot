@@ -2,3 +2,7 @@ slack-bolt>=1.20.0
 strands-agents>=1.0.0
 # AgentCore Memory 連携 (短期/長期メモリ)。strands 連携 extra を含める
 bedrock-agentcore[strands-agents]>=0.1.0
+# Socket Mode (slackbot.socket_app / Fargate) の WebSocket 接続に必要
+websocket-client>=1.7.0
+# あだ名・機嫌ストア(DynamoDB)。strands/agentcore の依存で入るが明示しておく
+boto3>=1.35.0

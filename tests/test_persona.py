@@ -46,3 +46,27 @@ def test_persona_flows_into_system_prompt_with_memory():
 
 def test_persona_without_memory_is_just_persona():
     assert core.build_system_prompt(persona.BASE_SYSTEM_PROMPT, "") == persona.PERSONA
+
+
+def test_fallback_message_is_nonempty_and_gyaru():
+    """失敗時の返信も素の謝罪ではなくギャル口調を保つ。"""
+    assert persona.FALLBACK_MESSAGE.strip()
+    assert "すみません" not in persona.FALLBACK_MESSAGE
+
+
+def test_behavior_guide_mentions_all_tools():
+    """あだ名・特徴・機嫌のツール名がガイドに含まれていること。"""
+    assert "set_nickname" in persona.BEHAVIOR_GUIDE
+    assert "remember_about" in persona.BEHAVIOR_GUIDE
+    assert "set_mood" in persona.BEHAVIOR_GUIDE
+
+
+def test_behavior_guide_says_saving_is_silent():
+    """保存をいちいち宣言しない方針が含まれていること。"""
+    assert "宣言しない" in persona.BEHAVIOR_GUIDE
+
+
+def test_cold_mode_note_is_about_apology_recovery():
+    """塩対応注記は『謝られたら解除して戻す』方針を含む。"""
+    assert "謝" in persona.COLD_MODE_NOTE
+    assert "set_mood" in persona.COLD_MODE_NOTE

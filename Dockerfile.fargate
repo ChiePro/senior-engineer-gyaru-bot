@@ -1,0 +1,18 @@
+# ECS Fargate 用イメージ(Socket Mode 常駐プロセス)。
+# Lambda ベースイメージではなく通常の Python イメージで、socket_app を直接起動する。
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 依存だけ先に入れてレイヤーキャッシュを効かせる
+COPY requirements_strands.txt ./
+RUN pip install --no-cache-dir -r requirements_strands.txt
+
+# 本体パッケージを同梱
+COPY slackbot ./slackbot
+
+# バッファリングを切ってログを即時に出す
+ENV PYTHONUNBUFFERED=1
+
+# Slack へ outbound WebSocket を張って常駐する
+CMD ["python", "-m", "slackbot.socket_app"]

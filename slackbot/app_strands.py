@@ -22,19 +22,9 @@ import os
 from slack_bolt import App
 from slack_bolt.adapter.aws_lambda import SlackRequestHandler
 
-from strands import Agent
-from strands.models import BedrockModel
-from bedrock_agentcore.memory.integrations.strands.config import (
-    AgentCoreMemoryConfig,
-    RetrievalConfig,
-)
-from bedrock_agentcore.memory.integrations.strands.session_manager import (
-    AgentCoreMemorySessionManager,
-)
-
 from slackbot.core import clean_mention, is_slack_retry
-from slackbot.namespaces import NS_PREFERENCES, NS_FACTS, resolve
-from slackbot.persona import STRANDS_SYSTEM_PROMPT
+from slackbot.persona import FALLBACK_MESSAGE
+from slackbot.strands_runtime import respond
 
 logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,26 +50,17 @@ def handle_mention(event, context, say, logger):
     text = clean_mention(event.get("text", "")) or "こんにちは"
 
     try:
-        mem_config = AgentCoreMemoryConfig(
+        reply = respond(
+            user_id=user_id,
+            thread_ts=thread_ts,
+            text=text,
+            region=REGION,
+            model_id=MODEL_ID,
             memory_id=MEMORY_ID,
-            actor_id=user_id,      # 長期記憶を「人」に紐付ける
-            session_id=thread_ts,  # 短期記憶を「スレッド」に紐付ける
-            # namespaces.py を単一ソースに resolve。create_memory.py の登録と一致する。
-            retrieval_config={
-                resolve(NS_PREFERENCES, user_id): RetrievalConfig(top_k=5, relevance_score=0.2),
-                resolve(NS_FACTS, user_id): RetrievalConfig(top_k=5, relevance_score=0.2),
-            },
         )
-        with AgentCoreMemorySessionManager(mem_config, region_name=REGION) as session_manager:
-            agent = Agent(
-                model=BedrockModel(model_id=MODEL_ID, region_name=REGION),
-                system_prompt=STRANDS_SYSTEM_PROMPT,
-                session_manager=session_manager,
-            )
-            reply = str(agent(text))
     except Exception:
         logger.exception("Agent invocation failed")
-        reply = "すみません、応答の生成に失敗しました。"
+        reply = FALLBACK_MESSAGE
 
     say(text=reply, thread_ts=thread_ts)
 
