@@ -40,11 +40,10 @@ Resources:
       PackageType: Image
       Architectures:
         - x86_64
-      # コールドスタートで Slack の3秒ルールに間に合わないため、バージョンを発行して
-      # エイリアス live に Provisioned Concurrency を1つ張り、常に温めておく。
-      AutoPublishAlias: live
-      ProvisionedConcurrencyConfig:
-        ProvisionedConcurrentExecutions: 1
+      # 本来はコールドスタート対策に Provisioned Concurrency を張りたいが、アカウントの
+      # Lambda 同時実行上限が 10(新規アカウント既定)で「未予約を最低10残す」制約に当たり
+      # 確保できないため未使用。上限引き上げ後に AutoPublishAlias: live + PC を有効化する。
+      # 暫定対策は MemorySize 2048(下の Globals)による import 高速化のみ。
       Environment:
         Variables:
           SLACK_BOT_TOKEN: !Ref SlackBotToken
@@ -61,7 +60,7 @@ Resources:
                 - bedrock:InvokeModelWithResponseStream
               Resource: "*"
         # 2) lazy listener が自分自身を非同期 invoke するための自己 invoke 権限。
-        #    AutoPublishAlias 使用時は alias 修飾された ARN で呼ばれるため :* も許可する。
+        #    将来 AutoPublishAlias を有効化すると alias 修飾 ARN で呼ばれるため :* も許可しておく。
         - Statement:
             - Effect: Allow
               Action: lambda:InvokeFunction

@@ -324,19 +324,21 @@ sam deploy --parameter-overrides \
 > 秘密情報は現状 Lambda 環境変数として渡しています(スケルトン簡略化のため)。
 > 本番では Secrets Manager / SSM Parameter Store への移行を検討してください。
 
-### コールドスタートと Provisioned Concurrency
+### コールドスタートについて
 
 Strands 版はコンテナ + 重い依存(`strands-agents` / `bedrock-agentcore`)のため、
-コールドスタートの初期化が Slack の3秒ルール(URL 検証・初回メンション)に間に合いません。
-`template.yaml` では対策として:
+コールドスタートの初期化が重く、Slack の3秒ルール(URL 検証・初回メンション)に
+間に合わないことがあります。`template.yaml` では `MemorySize: 2048` にして CPU を増やし、
+import を高速化することで INIT タイムアウトを回避しています(初回はウォームになるまで
+Slack 側の「Retry」や再送が必要になる場合あり)。
 
-- `MemorySize: 2048` … メモリ増で CPU も増え、import を高速化
-- `AutoPublishAlias: live` + `ProvisionedConcurrencyConfig: 1` … 初期化済みインスタンスを
-  常に1つ温めておき、コールドスタートを無くす
-
-> Provisioned Concurrency は**常時1インスタンス分の継続課金**が発生します。コストを抑えたい場合は
-> `ProvisionedConcurrentExecutions` を 0 にする(その代わりコールドスタート時は3秒ルールに
-> 間に合わず Slack の再送頼みになる)か、軽量な DIY 版(`slackbot.app.handler`)の採用を検討してください。
+> **Provisioned Concurrency(常時ウォーム)が本来の対策**ですが、Lambda の同時実行上限が
+> 既定の `10` のままだと「未予約を最低10残す」制約に当たり確保できません。使う場合は先に
+> Service Quotas で Lambda の「Concurrent executions」上限を引き上げ、`template.yaml` に
+> `AutoPublishAlias: live` と `ProvisionedConcurrencyConfig` を足してください。
+>
+> 恒久的に綺麗にするなら、長時間起動の **ECS Fargate + Slack Socket Mode** へ寄せると
+> API Gateway・URL 検証・コールドスタートの問題自体が無くなります。
 
 ---
 
