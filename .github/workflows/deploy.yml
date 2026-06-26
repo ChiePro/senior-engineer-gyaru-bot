@@ -17,6 +17,10 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECS_STACK: gyaru-bot-ecs
+
 jobs:
   deploy:
     # CI が失敗/キャンセルのときは動かさない
@@ -32,24 +36,45 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Set up SAM CLI
-        uses: aws-actions/setup-sam@v2
-        with:
-          use-installer: true
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: SAM build (container image)
-        run: sam build
-
-      - name: SAM deploy
+      - name: Build and push image (linux/amd64)
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          # コミット SHA をタグにして毎回イメージを不変にする。
+          # ImageUri が変わることで TaskDefinition も変わり、ECS が自動でローリングする。
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
         run: |
-          sam deploy \
-            --region "${{ vars.AWS_REGION }}" \
+          IMAGE_URI="$REGISTRY/$REPOSITORY:$IMAGE_TAG"
+          docker build --platform linux/amd64 -f Dockerfile.fargate -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy ECS stack (CloudFormation)
+        run: |
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name "$ECS_STACK" \
+            --template-file ecs.yaml \
+            --capabilities CAPABILITY_IAM \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
-              "SlackBotToken=${{ secrets.SLACK_BOT_TOKEN }}" \
-              "SlackSigningSecret=${{ secrets.SLACK_SIGNING_SECRET }}" \
+              "ImageUri=${{ steps.image.outputs.image_uri }}" \
+              "MemoryId=${{ secrets.MEMORY_ID }}" \
               "BedrockRegion=${{ vars.BEDROCK_REGION }}" \
               "BedrockModelId=${{ vars.BEDROCK_MODEL_ID }}" \
-              "MemoryId=${{ secrets.MEMORY_ID }}"
+              "VpcId=${{ vars.VPC_ID }}" \
+              "SubnetIds=${{ vars.SUBNET_IDS }}"
+
+      - name: Wait for service to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --region "$AWS_REGION" \
+            --cluster "$ECS_STACK" \
+            --services "$ECS_STACK"

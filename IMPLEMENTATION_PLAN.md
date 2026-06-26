@@ -24,8 +24,11 @@ Lambda のコールドスタートが Slack の3秒ルールに勝てず、Provi
 **Status**: Complete
 
 ## Stage 5: CI/CD を ECS 用に作り替え
-**Goal**: deploy.yml を「image build→ECR push→cloudformation deploy ecs.yaml」に変更、OIDC ロールに ecs/ec2/ssm 権限追加
-**Status**: Not Started
+**Goal**: deploy.yml を「image build→ECR push→cloudformation deploy ecs.yaml」に変更、OIDC ロールに ecs/ec2/dynamodb 権限追加
+**成果物**: `.github/workflows/deploy.yml`(ECR build/push + CFN deploy + services-stable wait)、
+`infra/github-oidc-bootstrap.yaml`(ecs-container-deploy ポリシー、PassRole は ecs-tasks)、
+GitHub 変数 ECR_REPOSITORY / VPC_ID / SUBNET_IDS を追加・BEDROCK_MODEL_ID を更新
+**Status**: Complete
 
 ## 後片付け
 - 旧 SAM(Lambda)スタック `senior-engineer-gyaru-bot` は不要になったら削除

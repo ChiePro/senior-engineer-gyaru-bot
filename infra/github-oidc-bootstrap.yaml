@@ -8,7 +8,7 @@ Description: >
       --template-file infra/github-oidc-bootstrap.yaml \
       --stack-name gyaru-bot-oidc \
       --capabilities CAPABILITY_NAMED_IAM \
-      --parameter-overrides GitHubOrg=ChiePro GitHubRepo=senior-engineer-gyaru-bot
+      --parameter-overrides GitHubOrg=ChiePro GitHubRepo=senior-engineer-gyaru-bot DeployStackName=gyaru-bot-ecs
 
 Parameters:
   GitHubOrg:
@@ -30,8 +30,8 @@ Parameters:
       アカウントに既に存在する場合は false にする(プロバイダはアカウントに1つだけ)。
   DeployStackName:
     Type: String
-    Default: senior-engineer-gyaru-bot
-    Description: このロールがデプロイを許可する SAM スタック名(IAM ロール名の絞り込みに使う)
+    Default: gyaru-bot-ecs
+    Description: このロールがデプロイを許可する ECS スタック名(作成される IAM ロール名の絞り込みに使う)
 
 Conditions:
   ShouldCreateProvider: !Equals [!Ref CreateOIDCProvider, "true"]
@@ -67,35 +67,42 @@ Resources:
                 # 指定リポジトリの指定ブランチからの実行だけを許可
                 token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}"
       Policies:
-        - PolicyName: sam-container-deploy
+        - PolicyName: ecs-container-deploy
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # CloudFormation(SAM スタックの作成・更新)
+              # CloudFormation(ECS スタック ecs.yaml の作成・更新)
               - Effect: Allow
                 Action: cloudformation:*
                 Resource: "*"
-              # SAM 管理の成果物バケット(resolve_s3 が aws-sam-cli-* を作る)
-              - Effect: Allow
-                Action: s3:*
-                Resource:
-                  - "arn:aws:s3:::aws-sam-cli-*"
-                  - "arn:aws:s3:::aws-sam-cli-*/*"
-              # コンテナイメージの ECR への push(resolve_image_repos が repo を作る)
+              # コンテナイメージの ECR への push(ログイン + リポジトリ操作)
               - Effect: Allow
                 Action: ecr:GetAuthorizationToken
                 Resource: "*"
               - Effect: Allow
                 Action: ecr:*
                 Resource: "*"
-              # Lambda / API Gateway / ログ
+              # ECS(クラスタ/サービス/タスク定義)・ログ・DynamoDB テーブル
               - Effect: Allow
                 Action:
-                  - lambda:*
-                  - apigateway:*
+                  - ecs:*
                   - logs:*
+                  - dynamodb:*
                 Resource: "*"
-              # SAM が作る Lambda 実行ロールの管理(スタック名で絞る)
+              # EC2: VPC/Subnet 参照とサービス用セキュリティグループの作成・削除
+              - Effect: Allow
+                Action:
+                  - ec2:Describe*
+                  - ec2:CreateSecurityGroup
+                  - ec2:DeleteSecurityGroup
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource: "*"
+              # ecs.yaml が作る ExecutionRole / TaskRole の管理(スタック名で絞る)
               - Effect: Allow
                 Action:
                   - iam:CreateRole
@@ -110,14 +117,15 @@ Resources:
                   - iam:GetRolePolicy
                   - iam:ListRolePolicies
                   - iam:ListAttachedRolePolicies
+                  - iam:ListRoleTags
                 Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${DeployStackName}-*"
-              # 実行ロールを Lambda に渡す
+              # 作成したロールを ECS タスクに渡す
               - Effect: Allow
                 Action: iam:PassRole
                 Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${DeployStackName}-*"
                 Condition:
                   StringEquals:
-                    iam:PassedToService: lambda.amazonaws.com
+                    iam:PassedToService: ecs-tasks.amazonaws.com
 
 Outputs:
   RoleArn:
