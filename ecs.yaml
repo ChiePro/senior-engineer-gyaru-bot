@@ -41,6 +41,10 @@ Parameters:
     Type: String
     Default: /gyaru-bot/SLACK_APP_TOKEN
     Description: SSM Parameter Store (SecureString) の名前。xapp-... を格納
+  TavilyApiKeyParam:
+    Type: String
+    Default: /gyaru-bot/TAVILY_API_KEY
+    Description: SSM Parameter Store (SecureString) の名前。Tavily APIキー(tvly-...)を格納。web_search 用
 
 Resources:
   LogGroup:
@@ -89,6 +93,7 @@ Resources:
                 Resource:
                   - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackBotTokenParam}"
                   - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackAppTokenParam}"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TavilyApiKeyParam}"
               - Effect: Allow
                 Action: kms:Decrypt
                 Resource: "*"
@@ -167,6 +172,8 @@ Resources:
               ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackBotTokenParam}"
             - Name: SLACK_APP_TOKEN
               ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackAppTokenParam}"
+            - Name: TAVILY_API_KEY
+              ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TavilyApiKeyParam}"
           LogConfiguration:
             LogDriver: awslogs
             Options:
