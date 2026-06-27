@@ -73,6 +73,22 @@ def test_group_reply_guide_enables_active_participation_and_skip():
     assert "正確" in guide
 
 
+def test_speak_gate_prompt_is_conservative_and_one_word():
+    """発話ゲートは原則 NO・YES/NO の1語出力・他人宛て/相槌/沈黙コメントを NO にする。"""
+    g = persona.SPEAK_GATE_PROMPT
+    assert g.strip()
+    assert "YES" in g and "NO" in g
+    assert "原則" in g  # 原則 NO に倒す
+    # 他人宛て(あだ名/名前呼びかけ)と、きあらの沈黙へのコメントは NO 側に明記
+    assert "あだ名" in g or "名前" in g
+    assert "沈黙" in g
+
+
+def test_behavior_guide_does_not_narrate_silence():
+    """自分の沈黙・skip・内部のふるまいを実況しない方針が含まれていること。"""
+    assert "実況" in persona.BEHAVIOR_GUIDE or "黙ったこと" in persona.BEHAVIOR_GUIDE
+
+
 def test_group_reply_guide_skips_when_addressed_to_others():
     """他人宛て(@だけでなく あだ名・名前の呼びかけ)には割り込まない方針が明記されていること。"""
     guide = persona.GROUP_REPLY_GUIDE

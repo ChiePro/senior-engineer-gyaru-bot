@@ -28,6 +28,7 @@ from slackbot.core import (
     format_search_results,
     strip_internal_tags,
     normalize_slack_id,
+    parse_speak_decision,
     as_bool,
 )
 from slackbot.namespaces import NS_PREFERENCES, NS_FACTS, resolve
@@ -36,9 +37,47 @@ from slackbot.persona import (
     BEHAVIOR_GUIDE,
     COLD_MODE_NOTE,
     GROUP_REPLY_GUIDE,
+    SPEAK_GATE_PROMPT,
     ABE_MODE_NOTE,
     ABE_MODE_PROBABILITY,
 )
+
+
+def should_speak(
+    *,
+    region: str,
+    model_id: str,
+    message: str,
+    transcript: str = "",
+    speaker_id: str = "",
+    nickname_directory: str = "",
+) -> bool:
+    """複数人スレッド(または他人宛ての発言)で、きあらが今この最新発言に口を挟むべきか判定する。
+
+    回答生成(respond)とは独立した軽い1回の呼び出し。原則 NO に倒した SPEAK_GATE_PROMPT を使い、
+    記憶もツールも持たせない(=安く・保守的に)。判定だけなので結果は parse_speak_decision で bool 化。
+    あだ名辞書を渡すと「名前で他人に呼びかけている」発言を他人宛てと見抜きやすくなる。
+    呼び出し側は失敗時に黙る(fail-closed)よう False 扱いにすること。
+    """
+    system = SPEAK_GATE_PROMPT
+    if nickname_directory:
+        system += "\n\n" + nickname_directory
+    if speaker_id:
+        system += f"\n\n最新の発言をした人の Slack ユーザーID: {speaker_id}"
+
+    parts = []
+    if transcript:
+        parts.append("これまでの流れ:\n" + transcript)
+    parts.append("最新の発言:\n" + message)
+    parts.append("きあらは今この最新の発言に口を挟むべき? YES か NO の1語だけで答えて。")
+    user = "\n\n".join(parts)
+
+    agent = Agent(
+        model=BedrockModel(model_id=model_id, region_name=region),
+        system_prompt=system,
+        callback_handler=None,
+    )
+    return parse_speak_decision(str(agent(user)))
 
 
 def _build_tools(store, speaker_id: str):

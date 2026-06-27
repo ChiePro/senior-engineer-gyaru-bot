@@ -217,6 +217,16 @@ def classify_thread(
     return "one_on_one" if humans == {speaker_id} else "group"
 
 
+def parse_speak_decision(text: str) -> bool:
+    """発話ゲート(should_speak)の出力 YES/NO を頑健に解釈する。既定は黙る(False)。
+
+    モデルは原則「YES」か「NO」の1語を返す前提だが、揺れに備える。内部タグを落としてから、
+    肯定語(yes / はい)で始まるときだけ True。曖昧・空・解釈不能は安全側(黙る)に倒す。
+    """
+    t = strip_internal_tags(text or "").strip().lower()
+    return t.startswith("yes") or t.startswith("はい")
+
+
 def strip_skip_token(text: str) -> str:
     """グループ応答の skip 印(<skip/>)を本文から除去する。本文が混ざっていても残す。"""
     return _SKIP_RE.sub("", text or "").strip()
