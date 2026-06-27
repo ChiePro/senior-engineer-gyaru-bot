@@ -107,9 +107,15 @@ def respond(
         memory_id=memory_id,
         actor_id=actor,
         session_id=session,
+        # 「件数で流し込む」のではなく「価値(関連度)で選別する」設計にする。
+        # relevance_score = 今の話題との類似度の最小バー。これが実質の取捨選択ゲートで、
+        #   バーを超えた記憶だけ入り、超えなければ0件(=脈絡のない昔の話を持ち出さない)。
+        # top_k = 件数の上限だが、主役にしない。バーを超えた“価値ある記憶”を件数で切り落とさない
+        #   よう、滅多に当たらない安全上限として高めに置く(密集して暴発した時だけ効く保険)。
+        # しきい値は実環境のスコア分布で要調整(拾わなすぎ→下げる / まだ多い→上げる)。
         retrieval_config={
-            resolve(NS_PREFERENCES, actor): RetrievalConfig(top_k=5, relevance_score=0.2),
-            resolve(NS_FACTS, actor): RetrievalConfig(top_k=5, relevance_score=0.2),
+            resolve(NS_PREFERENCES, actor): RetrievalConfig(top_k=10, relevance_score=0.6),
+            resolve(NS_FACTS, actor): RetrievalConfig(top_k=10, relevance_score=0.6),
         },
     )
     with AgentCoreMemorySessionManager(mem_config, region_name=region) as session_manager:
