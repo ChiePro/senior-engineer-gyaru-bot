@@ -191,13 +191,16 @@ def handle_message(event, client, say, logger):
         return
 
     text = strip_bot_mention(raw, BOT_USER_ID) or "(発言)"
-    is_group = kind == "group"
+    # 「黙る」を許すのは、グループ(他の人もいる)か、発言が他の人を @ している(=その人宛てらしい)とき。
+    # 1対1スレッド(きあら+発言者だけ)で他人言及も無いなら、毎回ちゃんと返す。
+    addressed_others = bool(mentioned_user_ids(raw, exclude=BOT_USER_ID))
+    may_stay_silent = kind == "group" or addressed_others
     _generate_and_post(
         event,
         say,
         text=text,
-        may_stay_silent=is_group,
-        thread_context=transcript if is_group else None,
+        may_stay_silent=may_stay_silent,
+        thread_context=transcript if may_stay_silent else None,
     )
 
 
