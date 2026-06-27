@@ -52,7 +52,11 @@
   - ツール本体(I/O)はユニット対象外 → Stage 4 の実モデル検証で担保。
 **Status**: Complete
 
-## Stage 3: secret & インフラ(`ecs.yaml` / SSM)
+> **分割メモ**: Stage 1+2 は**コードのみ**で `ecs.yaml` 不変 → コスト承認ゲート不要・本番挙動は不変
+> (キー未設定なら web_search を足さない)。先にこれを PR→マージ→デプロイして安全に土台を入れる。
+> Stage 3 以降は **Tavily APIキーの取得(ユーザー操作)が前提**。キー入手後にまとめてアクティベートする。
+
+## Stage 3: secret & インフラ(`ecs.yaml` / SSM) ← Tavily キー取得が前提
 **Goal**: Tavily API キーを SSM(SecureString)に置き、タスクに注入する。Slack トークンと同パターン。
 **Success Criteria**:
   - SSM: `aws ssm put-parameter --name /gyaru-bot/TAVILY_API_KEY --type SecureString ...`(手動・1回)。
