@@ -54,6 +54,26 @@ class UserStore:
             ExpressionAttributeValues={":empty": [], ":n": [note][:MAX_NOTES]},
         )
 
+    def all_nicknames(self) -> dict:
+        """あだ名が設定されている全ユーザーの {user_id: nickname} を返す。
+
+        あだ名で呼ばれたとき誰のことか必ず照合できるよう、会話に未登場の人も含め全件を引く
+        (build_nickname_directory が逆引き辞書に整形する)。テーブルはワークスペース規模(小)
+        前提なので Scan で十分。nickname 属性が無い行はスキップする。
+        """
+        out = {}
+        kwargs = {"ProjectionExpression": "user_id, nickname"}
+        while True:
+            resp = self._table.scan(**kwargs)
+            for item in resp.get("Items", []):
+                nn = item.get("nickname")
+                if nn:
+                    out[item["user_id"]] = nn
+            lek = resp.get("LastEvaluatedKey")
+            if not lek:
+                return out
+            kwargs["ExclusiveStartKey"] = lek
+
     def profiles_for(self, user_ids: list) -> dict:
         """指定ユーザー群のうち、あだ名か特徴がある人だけ {id: {nickname, notes}} で返す。"""
         out = {}
