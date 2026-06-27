@@ -48,6 +48,12 @@ def test_behavior_guide_says_saving_is_silent():
     assert "宣言しない" in persona.BEHAVIOR_GUIDE
 
 
+def test_behavior_guide_mentions_web_search_policy():
+    """Web検索ツールの使い方(最新性が要るときだけ/要約して返す)が含まれていること。"""
+    assert "web_search" in persona.BEHAVIOR_GUIDE
+    assert "最新" in persona.BEHAVIOR_GUIDE
+
+
 def test_cold_mode_note_is_about_apology_recovery():
     """塩対応注記は『謝られたら解除して戻す』方針を含む。"""
     assert "謝" in persona.COLD_MODE_NOTE

@@ -133,6 +133,53 @@ def test_build_nickname_directory_lists_all_known_nicknames():
     assert "U3" not in bot_core.build_nickname_directory({"U1": "坂もっちゃん", "U3": None})
 
 
+# --- format_search_results (Web検索結果の整形) ---
+def test_format_search_results_empty():
+    assert bot_core.format_search_results([]) == ""
+    assert bot_core.format_search_results(None) == ""
+
+
+def test_format_search_results_includes_title_and_url():
+    results = [
+        {"title": "Python 3.13 リリース", "url": "https://example.com/py313", "content": "新機能の概要。"},
+        {"title": "Strands Agents とは", "url": "https://example.com/strands", "content": "概要説明。"},
+    ]
+    out = bot_core.format_search_results(results)
+    assert "Python 3.13 リリース" in out
+    assert "https://example.com/py313" in out
+    assert "Strands Agents とは" in out
+
+
+def test_format_search_results_caps_item_count():
+    results = [
+        {"title": f"記事{i}", "url": f"https://example.com/{i}", "content": "本文"}
+        for i in range(10)
+    ]
+    out = bot_core.format_search_results(results, max_items=3)
+    # 上位3件だけ(1件=行頭 "- " の1行)
+    item_lines = [ln for ln in out.splitlines() if ln.startswith("- ")]
+    assert len(item_lines) == 3
+
+
+def test_format_search_results_truncates_by_chars_without_breaking_url():
+    long_content = "あ" * 500
+    results = [
+        {"title": f"記事{i}", "url": f"https://example.com/article/{i}", "content": long_content}
+        for i in range(5)
+    ]
+    out = bot_core.format_search_results(results, max_items=5, max_chars=300)
+    assert len(out) <= 300
+    # 先頭の件は残り、URL が途中で切れていない(載っている URL は完全形)
+    assert "https://example.com/article/0" in out
+
+
+def test_format_search_results_tolerates_missing_fields():
+    # title / content 欠落でも例外を投げない
+    out = bot_core.format_search_results([{"url": "https://example.com/x"}])
+    assert "https://example.com/x" in out
+    assert bot_core.format_search_results([{}]) is not None
+
+
 # --- namespace 整合 (socket_app の retrieval と create_memory の登録が一致する保証) ---
 def test_resolve_substitutes_actor_id():
     assert namespaces.resolve(namespaces.NS_PREFERENCES, "U123") == "/users/U123/preferences/"

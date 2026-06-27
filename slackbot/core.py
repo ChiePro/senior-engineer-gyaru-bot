@@ -91,6 +91,39 @@ def build_nickname_directory(nicknames: dict) -> str:
     )
 
 
+def format_search_results(results, *, max_items: int = 5, max_chars: int = 1200) -> str:
+    """Web 検索結果を、モデルに渡す短い注記文字列へ整形する(I/O は持たない)。
+
+    results: [{"title": str, "url": str, "content": str}, ...](Tavily の results 形式)
+    1件 = 行頭 "- " の1行「- タイトル — 要約 (URL)」。要約は content を短く切る。
+    生の検索ペイロードをそのまま渡すと context とコストが膨らむため、上位 max_items 件に絞り、
+    総文字数が max_chars を超える場合は末尾の件から落として収める(載せる URL は途中で切らない)。
+    title/content 欠落や空入力に耐え、例外は投げない。
+    """
+    lines = []
+    for r in (results or [])[:max_items]:
+        if not isinstance(r, dict):
+            continue
+        url = (r.get("url") or "").strip()
+        title = (r.get("title") or "").strip() or url or "(無題)"
+        content = " ".join((r.get("content") or "").split())  # 改行・連続空白をならす
+        summary = content[:120] + ("…" if len(content) > 120 else "")
+        line = f"- {title}"
+        if summary:
+            line += f" — {summary}"
+        if url:
+            line += f" ({url})"
+        lines.append(line)
+    # max_chars を超えない範囲で、先頭の件から詰められるだけ詰める(行単位で落とす=URL を割らない)。
+    out = ""
+    for line in lines:
+        candidate = line if not out else out + "\n" + line
+        if len(candidate) > max_chars:
+            break
+        out = candidate
+    return out
+
+
 _INTERNAL_BLOCK_RE = re.compile(
     r"<(thinking|reasoning|scratchpad|reflection)>.*?</\1>", re.DOTALL | re.IGNORECASE
 )

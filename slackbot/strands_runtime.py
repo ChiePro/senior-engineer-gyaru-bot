@@ -25,6 +25,7 @@ from slackbot.core import (
     safe_id,
     build_people_note,
     build_nickname_directory,
+    format_search_results,
     strip_internal_tags,
     normalize_slack_id,
     as_bool,
@@ -81,6 +82,34 @@ def _build_tools(store, speaker_id: str):
     return [set_nickname, remember_about, set_mood]
 
 
+def _build_web_search_tool(api_key: str):
+    """Tavily を叩く web_search ツールを作る(I/O)。
+
+    最新性が要るときだけモデルが呼ぶ前提(発動条件は persona.BEHAVIOR_GUIDE で縛る)。生の検索
+    ペイロードはそのまま返さず core.format_search_results で短い注記に整形し、context とコストを抑える。
+    失敗時も短い日本語を返し、モデルがリトライ/ナレーションのループに入らないようにする。
+    tavily-python は本番イメージにのみ入るため import は遅延(キーがある実行時だけ評価)。
+    """
+    from tavily import TavilyClient
+
+    client = TavilyClient(api_key=api_key)
+
+    @tool
+    def web_search(query: str) -> str:
+        """最新情報を Web 検索する。最新性・確実性が要るときだけ使う。
+
+        query は調べたいことの短い検索クエリ。結果は要約済みの短いテキストで返る。
+        """
+        try:
+            resp = client.search(query=query, max_results=5, search_depth="basic")
+        except Exception:
+            return "検索に失敗した(今は使えないかも)"
+        results = resp.get("results") if isinstance(resp, dict) else None
+        return format_search_results(results) or "それっぽい結果が見つからんかった"
+
+    return web_search
+
+
 def respond(
     *,
     user_id: str,
@@ -93,6 +122,7 @@ def respond(
     profiles: dict | None = None,
     nicknames: dict | None = None,
     speaker_cold: bool = False,
+    tavily_api_key: str | None = None,
 ) -> str:
     """1メンション分の応答を生成して返す。
 
@@ -100,6 +130,7 @@ def respond(
     - session_id = スレッド thread_ts で短期記憶を「スレッド」に紐付け
     - store があれば set_nickname / set_mood ツールを渡し、既知あだ名・塩対応を prompt に注入
     - nicknames(全員のあだ名)があれば逆引き辞書を常に注入し、あだ名で呼ばれた相手を必ず特定できる
+    - tavily_api_key があれば web_search ツールを渡す(最新情報を検索できる。無ければ検索なしで動く)
     """
     # AgentCore の actorId/sessionId は [a-zA-Z0-9][a-zA-Z0-9-_]* のみ許可。
     # Slack の thread_ts はドットを含むので safe_id で整形する。actor も同じ整形値を
@@ -124,6 +155,10 @@ def respond(
             system += "\n\n" + note
         if speaker_cold:
             system += "\n\n" + COLD_MODE_NOTE
+
+    # Web 検索は store の有無と独立(キーがある実行時だけ追加)。発動条件は BEHAVIOR_GUIDE で縛る。
+    if tavily_api_key:
+        tools.append(_build_web_search_tool(tavily_api_key))
 
     # 10% の確率でだけ“安倍晋三っぽい国会答弁調”に口調を上書きする(塩対応とは独立して発動)。
     # 技術的な中身は ABE_MODE_NOTE 側で「崩さない」と縛っているので、コード・値は正確なまま。
