@@ -82,6 +82,23 @@ def test_normalize_slack_id_rejects_garbage():
     assert bot_core.normalize_slack_id(None) is None
 
 
+# --- as_bool (ツール引数の真偽値を頑健に解釈 / 塩対応の解除が効かない不具合対策) ---
+def test_as_bool_string_false_is_false():
+    # モデルが文字列 "false" を渡しても解除(False)になること(bool("false") は True の罠)
+    for v in ["false", "False", "FALSE", " false ", "0", "no", "off", "none", "null", ""]:
+        assert bot_core.as_bool(v) is False, v
+
+
+def test_as_bool_string_true_is_true():
+    for v in ["true", "True", "1", "yes", "on", "cold"]:
+        assert bot_core.as_bool(v) is True, v
+
+
+def test_as_bool_passes_through_real_bool():
+    assert bot_core.as_bool(True) is True
+    assert bot_core.as_bool(False) is False
+
+
 # --- build_people_note (あだ名 + 特徴) ---
 def test_build_people_note_empty():
     assert bot_core.build_people_note({}, "U1") == ""

@@ -52,3 +52,10 @@ def test_cold_mode_note_is_about_apology_recovery():
     """塩対応注記は『謝られたら解除して戻す』方針を含む。"""
     assert "謝" in persona.COLD_MODE_NOTE
     assert "set_mood" in persona.COLD_MODE_NOTE
+
+
+def test_abe_mode_note_keeps_accuracy_and_valid_probability():
+    """安倍モード注記は口調(地の文)だけ上書きし、技術的中身は正確に保つ。確率は 0〜1。"""
+    assert persona.ABE_MODE_NOTE.strip()
+    assert "正確" in persona.ABE_MODE_NOTE
+    assert 0 < persona.ABE_MODE_PROBABILITY <= 1
