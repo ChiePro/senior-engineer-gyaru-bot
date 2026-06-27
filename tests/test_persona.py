@@ -31,6 +31,13 @@ def test_strands_prompt_extends_persona_with_memory_hint():
     assert len(persona.STRANDS_SYSTEM_PROMPT) > len(persona.PERSONA)
 
 
+def test_strands_prompt_instructs_to_use_injected_clock():
+    """日付・時刻はシステムから渡される現在の日時(JST)を使う指示が含まれること。"""
+    p = persona.STRANDS_SYSTEM_PROMPT
+    assert "日時" in p and "JST" in p
+    assert "日付" in p or "時刻" in p
+
+
 def test_fallback_message_is_nonempty_and_gyaru():
     """失敗時の返信も素の謝罪ではなくギャル口調を保つ。"""
     assert persona.FALLBACK_MESSAGE.strip()
