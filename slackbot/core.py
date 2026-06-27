@@ -178,14 +178,22 @@ def summarize_thread(messages, bot_user_id: str, *, max_transcript: int = 12):
         if not isinstance(m, dict):
             continue
         text = m.get("text") or ""
-        is_bot = bool(m.get("bot_id")) or (bool(bot_user_id) and m.get("user") == bot_user_id)
+        is_our_bot = bool(bot_user_id) and m.get("user") == bot_user_id
+        is_any_bot = bool(m.get("bot_id")) or is_our_bot
         if bot_user_id and bot_user_id in mentioned_user_ids(text):
             bot_mentioned = True
-        if not is_bot:
+        if not is_any_bot:
             uid = m.get("user")
             if uid and uid not in human_ids:
                 human_ids.append(uid)
-        label = "きあら" if is_bot else (m.get("user") or "unknown")
+        # 自分(きあら)の発言だけ「きあら」表記。他 bot(別アプリ/ワークフロー)は別ラベルにして、
+        # モデルが「直前の自分の発言」と取り違えないようにする。
+        if is_our_bot:
+            label = "きあら"
+        elif is_any_bot:
+            label = m.get("username") or "bot"
+        else:
+            label = m.get("user") or "unknown"
         body = strip_bot_mention(text, bot_user_id) if bot_user_id else text.strip()
         if body:
             lines.append(f"{label}: {body}")

@@ -225,6 +225,20 @@ def test_summarize_thread_detects_bot_mention_and_humans():
     assert "U1: これ見て" in transcript  # Botメンションは transcript から除去
 
 
+def test_summarize_thread_labels_only_our_bot_as_kiara():
+    # 他 bot(別アプリ/ワークフロー)は「きあら」にしない & human にも入れない
+    messages = [
+        {"bot_id": "B1", "user": "BOT", "text": "りょ"},
+        {"bot_id": "B2", "username": "GitHub", "text": "PR opened"},
+        {"user": "U1", "text": "おつ"},
+    ]
+    _, human_ids, transcript = bot_core.summarize_thread(messages, "BOT")
+    assert human_ids == ["U1"]  # どちらの bot も人間に入らない
+    assert "きあら: りょ" in transcript
+    assert "GitHub: PR opened" in transcript  # 他 bot は「きあら」ではない別ラベル
+    assert "きあら: PR opened" not in transcript
+
+
 def test_summarize_thread_no_bot_mention():
     messages = [
         {"user": "U1", "text": "今日あついね"},
