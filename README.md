@@ -5,6 +5,11 @@
 `@ボット名 質問` でメンションすると、Amazon Bedrock が生成した回答をスレッドに返す
 社内向け Slack ボットの最小構成です。
 
+**一度メンションしたスレッドでは、その後メンション無しでも反応します**(ADR-0008)。
+きあらと自分だけのスレッドなら毎回返答し、他の人もいるスレッドでは空気を読んで積極的に参加します
+(割り込むべきでないときは黙ります)。過去にメンションが無いスレッドには割り込みません。
+この自発応答には `message.channels` イベント購読 + `channels:history` スコープが必要です(下記「1. Slack アプリの作成」)。
+
 中身はシニアエンジニア、でも口調はギャル — というキャラ付け(ほどよくギャル)を
 してあります。技術的な内容・コード・コマンドは正確に保ちつつ、地の口調だけ
 フランクにします。口調を変えたい/真面目なアシスタントに戻したいときは
@@ -68,9 +73,16 @@ Slack ──(outbound WebSocket / Socket Mode)── ECS Fargate Service(常時1
 3. **OAuth & Permissions** > Bot Token Scopes に追加:
    - `app_mentions:read`
    - `chat:write`
-4. **Event Subscriptions** を ON にし、Subscribe to bot events に `app_mention` を追加
-   (Socket Mode なので Request URL の設定は不要)。
-5. ワークスペースにインストールして **Bot User OAuth Token**(`xoxb-...`)を取得。
+   - `channels:history` … *メンション無しのスレッド自発応答に必要*(下記 4 の `message.channels` 用)。
+     プライベートチャンネル/DM でも使うなら `groups:history` / `im:history` / `mpim:history` も追加。
+4. **Event Subscriptions** を ON にし、Subscribe to bot events に追加:
+   - `app_mention` … メンションされたとき。
+   - `message.channels` … *メンション無しのスレッド自発応答に必要*(必要に応じ
+     `message.groups` / `message.im` / `message.mpim` も)。これが無いとメンション付きの発言しか届かない。
+   (Socket Mode なので Request URL の設定は不要。)
+5. ワークスペースにインストール(スコープ変更後は **再インストール**)して
+   **Bot User OAuth Token**(`xoxb-...`)を取得。Bot を対象チャンネルに招待しておく
+   (チャンネルのメッセージを受け取るには Bot がメンバーである必要がある)。
 6. **Basic Information** > App-Level Tokens で、スコープ `connections:write` の
    **App-Level Token**(`xapp-...`)を発行する(Socket Mode の接続に必須)。
 
@@ -222,6 +234,8 @@ required reviewers を設定**しておくこと。
   「中身」は崩さず正確に保つ、というガードレール付き。
 - `BEHAVIOR_GUIDE` — あだ名 / 特徴 / 機嫌(塩対応)ツールの使い方。保存は宣言せず裏方で行う方針。
 - `COLD_MODE_NOTE` — 失礼を言われた相手にだけ塩対応し、誠実な謝罪で解除する注記。
+- `GROUP_REPLY_GUIDE` — メンション済みスレッドへの自発参加(グループ)の方針。積極参加だが、
+  割り込むべきでないときは `<skip/>` だけ返して黙る(ADR-0008)。
 - `FALLBACK_MESSAGE` — 応答生成に失敗したときの、キャラを保った返信。
 
 ## テスト

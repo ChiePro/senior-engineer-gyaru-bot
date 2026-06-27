@@ -141,6 +141,92 @@ def strip_internal_tags(text: str) -> str:
     return t.strip()
 
 
+# --- スレッド内メンションレス応答の判定ロジック(純粋) ---
+# Slack/SDK を持ち込まず、socket_app から渡された素の値・dict だけで判定する。
+
+# グループスレッドで「今は割り込まない」とモデルが決めたとき、本文の代わりに返す印。
+# 検出(is_silent_reply)と人格ガイド(persona.GROUP_REPLY_GUIDE)が同じ綴りを使う(test で一致を検査)。
+SKIP_TOKEN = "<skip/>"
+_SKIP_RE = re.compile(r"</?\s*skip\s*/?>", re.IGNORECASE)
+
+
+def is_autoreply_candidate(
+    *, is_thread_reply: bool, is_from_bot: bool, has_subtype: bool, mentions_bot: bool
+) -> bool:
+    """conversations.replies を叩く前の安いフィルタ。メンションレス応答の候補かを返す。
+
+    - is_thread_reply: スレッドへの返信か(トップレベル発言は対象外)
+    - is_from_bot: 自分(Bot)の発言・bot_message か(自己応答ループ防止)
+    - has_subtype: 編集・参加通知など subtype 付きか(通常の人間発言だけ拾う)
+    - mentions_bot: この発言が Bot をメンションしているか(その場合は app_mention が処理)
+    """
+    return is_thread_reply and not is_from_bot and not has_subtype and not mentions_bot
+
+
+def summarize_thread(messages, bot_user_id: str, *, max_transcript: int = 12):
+    """conversations.replies の messages から (bot_mentioned, human_ids, transcript) を作る。
+
+    - bot_mentioned: スレッドのどこかで Bot がメンションされたことがあるか(=反応してよいスレッドか)
+    - human_ids: 実際に書き込んだ人間のID(順序保持・重複排除。Bot は含めない)
+    - transcript: 直近 max_transcript 件の読みやすいやり取り(Bot 発言は「きあら:」表記)
+    dict でない要素や user/text 欠落に耐え、例外は投げない。
+    """
+    bot_mentioned = False
+    human_ids: list = []
+    lines: list = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        text = m.get("text") or ""
+        is_our_bot = bool(bot_user_id) and m.get("user") == bot_user_id
+        is_any_bot = bool(m.get("bot_id")) or is_our_bot
+        if bot_user_id and bot_user_id in mentioned_user_ids(text):
+            bot_mentioned = True
+        if not is_any_bot:
+            uid = m.get("user")
+            if uid and uid not in human_ids:
+                human_ids.append(uid)
+        # 自分(きあら)の発言だけ「きあら」表記。他 bot(別アプリ/ワークフロー)は別ラベルにして、
+        # モデルが「直前の自分の発言」と取り違えないようにする。
+        if is_our_bot:
+            label = "きあら"
+        elif is_any_bot:
+            label = m.get("username") or "bot"
+        else:
+            label = m.get("user") or "unknown"
+        body = strip_bot_mention(text, bot_user_id) if bot_user_id else text.strip()
+        if body:
+            lines.append(f"{label}: {body}")
+    return bot_mentioned, human_ids, "\n".join(lines[-max_transcript:])
+
+
+def classify_thread(
+    *, bot_mentioned_in_thread: bool, human_participant_ids, speaker_id: str
+) -> str:
+    """スレッドの状況を "ignore" / "one_on_one" / "group" に分類する。
+
+    - bot_mentioned_in_thread が False → "ignore"(過去にメンションが無いスレッドには入らない)
+    - 書き込んだ人間が発言者ただ1人 → "one_on_one"
+    - 発言者以外の人間もいる → "group"
+    発言者は必ず人間として数える(participants 未収録でも 1対1 と判定できるようにする)。
+    """
+    if not bot_mentioned_in_thread:
+        return "ignore"
+    humans = set(human_participant_ids or ())
+    humans.add(speaker_id)
+    return "one_on_one" if humans == {speaker_id} else "group"
+
+
+def strip_skip_token(text: str) -> str:
+    """グループ応答の skip 印(<skip/>)を本文から除去する。本文が混ざっていても残す。"""
+    return _SKIP_RE.sub("", text or "").strip()
+
+
+def is_silent_reply(text: str) -> bool:
+    """グループ応答で「黙る」=投稿しないべき返信か。内部タグと skip 印を落として空なら True。"""
+    return strip_skip_token(strip_internal_tags(text)) == ""
+
+
 _FALSEY = {"false", "0", "no", "off", "none", "null", ""}
 
 

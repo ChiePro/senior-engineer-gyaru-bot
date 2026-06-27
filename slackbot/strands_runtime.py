@@ -35,6 +35,7 @@ from slackbot.persona import (
     STRANDS_SYSTEM_PROMPT,
     BEHAVIOR_GUIDE,
     COLD_MODE_NOTE,
+    GROUP_REPLY_GUIDE,
     ABE_MODE_NOTE,
     ABE_MODE_PROBABILITY,
 )
@@ -123,14 +124,19 @@ def respond(
     nicknames: dict | None = None,
     speaker_cold: bool = False,
     tavily_api_key: str | None = None,
+    may_stay_silent: bool = False,
+    thread_context: str | None = None,
 ) -> str:
-    """1メンション分の応答を生成して返す。
+    """1メンション分(またはスレッド内の自発応答1回分)の応答を生成して返す。
 
     - actor_id = Slack ユーザーID で長期記憶を「人」に紐付け
     - session_id = スレッド thread_ts で短期記憶を「スレッド」に紐付け
     - store があれば set_nickname / set_mood ツールを渡し、既知あだ名・塩対応を prompt に注入
     - nicknames(全員のあだ名)があれば逆引き辞書を常に注入し、あだ名で呼ばれた相手を必ず特定できる
     - tavily_api_key があれば web_search ツールを渡す(最新情報を検索できる。無ければ検索なしで動く)
+    - may_stay_silent: グループスレッドへの自発参加。割り込むべきでない時は本文を出さず <skip/> を返す
+    - thread_context: 直近スレッドのやり取り(自発参加時に空気を読むための文脈。AgentCore 短期記憶には
+      自分が処理していない他者の発言が入らないため、ここで補う)
     """
     # AgentCore の actorId/sessionId は [a-zA-Z0-9][a-zA-Z0-9-_]* のみ許可。
     # Slack の thread_ts はドットを含むので safe_id で整形する。actor も同じ整形値を
@@ -159,6 +165,13 @@ def respond(
     # Web 検索は store の有無と独立(キーがある実行時だけ追加)。発動条件は BEHAVIOR_GUIDE で縛る。
     if tavily_api_key:
         tools.append(_build_web_search_tool(tavily_api_key))
+
+    # グループスレッドへの自発参加(メンション無し)。割り込み判断のガイドと、空気を読むための
+    # 直近やり取りを system prompt に足す。1対1や通常メンションでは付けない(may_stay_silent=False)。
+    if may_stay_silent:
+        system += "\n\n" + GROUP_REPLY_GUIDE
+        if thread_context:
+            system += "\n\n直近のやり取り:\n" + thread_context
 
     # 10% の確率でだけ“安倍晋三っぽい国会答弁調”に口調を上書きする(塩対応とは独立して発動)。
     # 技術的な中身は ABE_MODE_NOTE 側で「崩さない」と縛っているので、コード・値は正確なまま。

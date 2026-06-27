@@ -180,6 +180,145 @@ def test_format_search_results_tolerates_missing_fields():
     assert bot_core.format_search_results([{}]) is not None
 
 
+# --- is_autoreply_candidate (API を叩く前の安いフィルタ) ---
+def test_autoreply_candidate_true_for_plain_thread_reply():
+    # スレッド返信・自分以外・subtype無し・Botメンション無し → 候補
+    assert bot_core.is_autoreply_candidate(
+        is_thread_reply=True, is_from_bot=False, has_subtype=False, mentions_bot=False
+    ) is True
+
+
+def test_autoreply_candidate_false_when_not_thread_reply():
+    # トップレベル発言(スレッド返信でない)は対象外
+    assert bot_core.is_autoreply_candidate(
+        is_thread_reply=False, is_from_bot=False, has_subtype=False, mentions_bot=False
+    ) is False
+
+
+def test_autoreply_candidate_false_for_bot_or_subtype_or_mention():
+    # 自分の発言 / 編集・参加通知などの subtype / Botメンション付き(=app_mention が処理)は除外
+    assert bot_core.is_autoreply_candidate(
+        is_thread_reply=True, is_from_bot=True, has_subtype=False, mentions_bot=False
+    ) is False
+    assert bot_core.is_autoreply_candidate(
+        is_thread_reply=True, is_from_bot=False, has_subtype=True, mentions_bot=False
+    ) is False
+    assert bot_core.is_autoreply_candidate(
+        is_thread_reply=True, is_from_bot=False, has_subtype=False, mentions_bot=True
+    ) is False
+
+
+# --- summarize_thread (conversations.replies の messages からスレッド要約) ---
+def test_summarize_thread_detects_bot_mention_and_humans():
+    messages = [
+        {"user": "U1", "text": "<@BOT> これ見て"},
+        {"bot_id": "B1", "user": "BOT", "text": "りょ、見るね"},
+        {"user": "U2", "text": "おつ"},
+        {"user": "U1", "text": "サンキュ"},
+    ]
+    bot_mentioned, human_ids, transcript = bot_core.summarize_thread(messages, "BOT")
+    assert bot_mentioned is True
+    # 人間だけ・順序保持・重複排除(Bot は human に入れない)
+    assert human_ids == ["U1", "U2"]
+    # transcript に Bot の発言はラベル付き、人間の発言も入る
+    assert "きあら: りょ、見るね" in transcript
+    assert "U1: これ見て" in transcript  # Botメンションは transcript から除去
+
+
+def test_summarize_thread_labels_only_our_bot_as_kiara():
+    # 他 bot(別アプリ/ワークフロー)は「きあら」にしない & human にも入れない
+    messages = [
+        {"bot_id": "B1", "user": "BOT", "text": "りょ"},
+        {"bot_id": "B2", "username": "GitHub", "text": "PR opened"},
+        {"user": "U1", "text": "おつ"},
+    ]
+    _, human_ids, transcript = bot_core.summarize_thread(messages, "BOT")
+    assert human_ids == ["U1"]  # どちらの bot も人間に入らない
+    assert "きあら: りょ" in transcript
+    assert "GitHub: PR opened" in transcript  # 他 bot は「きあら」ではない別ラベル
+    assert "きあら: PR opened" not in transcript
+
+
+def test_summarize_thread_no_bot_mention():
+    messages = [
+        {"user": "U1", "text": "今日あついね"},
+        {"user": "U2", "text": "まじ"},
+    ]
+    bot_mentioned, human_ids, transcript = bot_core.summarize_thread(messages, "BOT")
+    assert bot_mentioned is False
+    assert human_ids == ["U1", "U2"]
+
+
+def test_summarize_thread_tolerates_garbage():
+    # dict でない要素・user/text 欠落でも例外を投げない
+    messages = [None, {}, {"text": "<@BOT> hi"}, {"user": "U9"}]
+    bot_mentioned, human_ids, transcript = bot_core.summarize_thread(messages, "BOT")
+    assert bot_mentioned is True
+    assert "U9" in human_ids
+
+
+def test_summarize_thread_caps_transcript():
+    messages = [{"user": "U1", "text": f"msg{i}"} for i in range(30)]
+    _, _, transcript = bot_core.summarize_thread(messages, "BOT", max_transcript=5)
+    lines = [ln for ln in transcript.splitlines() if ln.strip()]
+    assert len(lines) == 5
+    # 直近(末尾)が残る
+    assert "msg29" in transcript
+    assert "msg0" not in transcript
+
+
+# --- classify_thread (どのスレッドで・どの濃さで反応するか) ---
+def test_classify_thread_ignore_when_bot_never_mentioned():
+    # 過去にメンションが無いスレッドには一切入らない
+    kind = bot_core.classify_thread(
+        bot_mentioned_in_thread=False, human_participant_ids=["U1"], speaker_id="U1"
+    )
+    assert kind == "ignore"
+
+
+def test_classify_thread_one_on_one():
+    # きあら + 発言者だけが書き込んでいる → 1対1
+    kind = bot_core.classify_thread(
+        bot_mentioned_in_thread=True, human_participant_ids=["U1"], speaker_id="U1"
+    )
+    assert kind == "one_on_one"
+
+
+def test_classify_thread_group():
+    # 発言者以外の人間も書き込んでいる → グループ
+    kind = bot_core.classify_thread(
+        bot_mentioned_in_thread=True, human_participant_ids=["U1", "U2"], speaker_id="U1"
+    )
+    assert kind == "group"
+
+
+def test_classify_thread_counts_speaker_even_if_missing_from_list():
+    # 発言者が participants に未収録でも 1対1 と判定(発言者は必ず人間として数える)
+    kind = bot_core.classify_thread(
+        bot_mentioned_in_thread=True, human_participant_ids=[], speaker_id="U1"
+    )
+    assert kind == "one_on_one"
+
+
+# --- SKIP_TOKEN / strip_skip_token / is_silent_reply (グループの「黙る」判定) ---
+def test_skip_token_only_is_silent():
+    assert bot_core.is_silent_reply(bot_core.SKIP_TOKEN) is True
+    assert bot_core.is_silent_reply(f"  {bot_core.SKIP_TOKEN}  ") is True
+    assert bot_core.is_silent_reply("") is True
+
+
+def test_normal_reply_is_not_silent():
+    assert bot_core.is_silent_reply("わかるー、それね") is False
+
+
+def test_strip_skip_token_keeps_real_content():
+    # skip と本文が混ざって漏れても、本文は残して skip だけ落とす
+    assert bot_core.strip_skip_token(f"{bot_core.SKIP_TOKEN}やっぱ答える") == "やっぱ答える"
+    assert bot_core.strip_skip_token("ふつうの返信") == "ふつうの返信"
+    # 本文ありなら silent ではない
+    assert bot_core.is_silent_reply(f"{bot_core.SKIP_TOKEN}やっぱ答える") is False
+
+
 # --- namespace 整合 (socket_app の retrieval と create_memory の登録が一致する保証) ---
 def test_resolve_substitutes_actor_id():
     assert namespaces.resolve(namespaces.NS_PREFERENCES, "U123") == "/users/U123/preferences/"

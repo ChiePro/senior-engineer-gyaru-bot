@@ -4,6 +4,7 @@
 """
 
 from slackbot import persona
+from slackbot import core as bot_core
 
 
 def test_persona_is_nonempty_and_japanese_instruction():
@@ -58,6 +59,18 @@ def test_cold_mode_note_is_about_apology_recovery():
     """塩対応注記は『謝られたら解除して戻す』方針を含む。"""
     assert "謝" in persona.COLD_MODE_NOTE
     assert "set_mood" in persona.COLD_MODE_NOTE
+
+
+def test_group_reply_guide_enables_active_participation_and_skip():
+    """グループ自発参加ガイド: 積極参加 + 黙るときの skip トークン + 技術正確さ。"""
+    guide = persona.GROUP_REPLY_GUIDE
+    assert guide.strip()
+    # 積極的に参加する方針
+    assert "積極" in guide
+    # 黙るときは skip トークンだけ返す(core と同じトークンを使う=drift 防止)
+    assert bot_core.SKIP_TOKEN in guide
+    # 技術的な中身は崩さない
+    assert "正確" in guide
 
 
 def test_abe_mode_note_keeps_accuracy_and_valid_probability():
