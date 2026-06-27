@@ -319,6 +319,23 @@ def test_strip_skip_token_keeps_real_content():
     assert bot_core.is_silent_reply(f"{bot_core.SKIP_TOKEN}やっぱ答える") is False
 
 
+# --- parse_speak_decision (発話ゲートの YES/NO を頑健に解釈・既定は黙る) ---
+def test_parse_speak_decision_yes():
+    for v in ["YES", "yes", "Yes", " yes ", "YES.", "はい", "Yes, 答えるべき"]:
+        assert bot_core.parse_speak_decision(v) is True, v
+
+
+def test_parse_speak_decision_no_or_unclear_defaults_false():
+    # NO はもちろん、曖昧・空・解釈不能なものは安全側(黙る=False)に倒す
+    for v in ["NO", "no", "いいえ", "", None, "わからない", "多分ね", "<thinking>yes</thinking>"]:
+        assert bot_core.parse_speak_decision(v) is False, v
+
+
+def test_parse_speak_decision_strips_internal_tags_before_judging():
+    # 内部タグを除去した本文で判定する(タグ内の yes に釣られない)
+    assert bot_core.parse_speak_decision("<thinking>no...</thinking>YES") is True
+
+
 # --- namespace 整合 (socket_app の retrieval と create_memory の登録が一致する保証) ---
 def test_resolve_substitutes_actor_id():
     assert namespaces.resolve(namespaces.NS_PREFERENCES, "U123") == "/users/U123/preferences/"

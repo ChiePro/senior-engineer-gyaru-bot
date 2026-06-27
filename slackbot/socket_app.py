@@ -31,11 +31,12 @@ from slackbot.core import (
     is_autoreply_candidate,
     summarize_thread,
     classify_thread,
+    build_nickname_directory,
     is_silent_reply,
     strip_skip_token,
 )
 from slackbot.persona import FALLBACK_MESSAGE
-from slackbot.strands_runtime import respond
+from slackbot.strands_runtime import respond, should_speak
 from slackbot.user_store import UserStore
 
 logging.basicConfig(level=logging.INFO)
@@ -191,17 +192,37 @@ def handle_message(event, client, say, logger):
         return
 
     text = strip_bot_mention(raw, BOT_USER_ID) or "(発言)"
-    # 「黙る」を許すのは、グループ(他の人もいる)か、発言が他の人を @ している(=その人宛てらしい)とき。
-    # 1対1スレッド(きあら+発言者だけ)で他人言及も無いなら、毎回ちゃんと返す。
+
+    # 純粋な1対1(きあら+発言者だけ・他人言及なし)は、毎回ちゃんと返す(=ゲート不要)。
+    # グループ、または発言が他の人を @ している(その人宛てらしい)ときは、回答生成とは別の保守的な
+    # 発話ゲートで「今喋るべきか」を先に判定し、YES のときだけ応答する(原則サイレント)。
     addressed_others = bool(mentioned_user_ids(raw, exclude=BOT_USER_ID))
-    may_stay_silent = kind == "group" or addressed_others
-    _generate_and_post(
-        event,
-        say,
-        text=text,
-        may_stay_silent=may_stay_silent,
-        thread_context=transcript if may_stay_silent else None,
-    )
+    if kind != "group" and not addressed_others:
+        _generate_and_post(event, say, text=text)
+        return
+
+    try:
+        nicknames = store.all_nicknames()
+    except Exception:
+        logger.exception("nickname read failed")
+        nicknames = {}
+    try:
+        speak = should_speak(
+            region=REGION,
+            model_id=MODEL_ID,
+            message=text,
+            transcript=transcript,
+            speaker_id=speaker_id,
+            nickname_directory=build_nickname_directory(nicknames),
+        )
+    except Exception:
+        logger.exception("speak gate failed")
+        speak = False  # 判定できなければ黙る(fail-closed)
+    if not speak:
+        return
+
+    # ゲートが「喋る」と判断。回答生成側にも保険の <skip/> を残しつつ、直近の流れを文脈として渡す。
+    _generate_and_post(event, say, text=text, may_stay_silent=True, thread_context=transcript)
 
 
 def main() -> None:
