@@ -319,6 +319,22 @@ def test_strip_skip_token_keeps_real_content():
     assert bot_core.is_silent_reply(f"{bot_core.SKIP_TOKEN}やっぱ答える") is False
 
 
+# --- format_clock_note (現在の日時を JST 注記にする / .now は I/O 層・ここは整形のみ) ---
+def test_format_clock_note_formats_jst_with_japanese_weekday():
+    from datetime import datetime, timezone, timedelta
+    dt = datetime(2024, 1, 1, 9, 5, tzinfo=timezone(timedelta(hours=9)))  # 月曜
+    note = bot_core.format_clock_note(dt)
+    assert "2024年1月1日" in note
+    assert "(月)" in note
+    assert "09:05" in note
+    assert "JST" in note
+
+
+def test_jst_is_fixed_plus_nine():
+    from datetime import timedelta
+    assert bot_core.JST.utcoffset(None) == timedelta(hours=9)
+
+
 # --- parse_speak_decision (発話ゲートの YES/NO を頑健に解釈・既定は黙る) ---
 def test_parse_speak_decision_yes():
     for v in ["YES", "yes", "Yes", " yes ", "YES.", "はい", "Yes, 答えるべき"]:

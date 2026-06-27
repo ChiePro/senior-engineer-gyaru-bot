@@ -10,6 +10,7 @@ namespace は slackbot.namespaces を、人格は slackbot.persona を単一ソ�
 """
 
 import random
+from datetime import datetime
 
 from strands import Agent, tool
 from strands.models import BedrockModel
@@ -26,10 +27,12 @@ from slackbot.core import (
     build_people_note,
     build_nickname_directory,
     format_search_results,
+    format_clock_note,
     strip_internal_tags,
     normalize_slack_id,
     parse_speak_decision,
     as_bool,
+    JST,
 )
 from slackbot.namespaces import NS_PREFERENCES, NS_FACTS, resolve
 from slackbot.persona import (
@@ -183,7 +186,9 @@ def respond(
     actor = safe_id(user_id)
     session = safe_id(thread_ts)
 
-    system = STRANDS_SYSTEM_PROMPT
+    # LLM は現在時刻を知らないので、応答ごとに現在の日時(JST)を注入する。
+    # 時計の取得(.now=副作用)はここ(I/O 層)で行い、整形は core の純粋関数に委ねる。
+    system = STRANDS_SYSTEM_PROMPT + "\n" + format_clock_note(datetime.now(JST))
     tools = []
     if store is not None:
         tools = _build_tools(store, user_id)
