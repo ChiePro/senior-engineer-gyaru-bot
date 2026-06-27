@@ -73,6 +73,24 @@ def build_people_note(profiles: dict, speaker_id: str) -> str:
     return "登場人物(ワークスペース共有の情報):\n" + "\n".join(lines)
 
 
+def build_nickname_directory(nicknames: dict) -> str:
+    """全ユーザーのあだ名(呼び名)一覧を system prompt 用の注記にする。
+
+    nicknames: {user_id: nickname}
+    build_people_note が「会話の登場人物」だけを注入するのに対し、こちらは会話に未登場の人も
+    含めた全件のあだ名を入れる。ユーザーがあだ名で人を呼んだとき(例:@メンション無しで
+    「さかもっちゃん元気?」)に、それが誰のことか必ず照合できる状態を保つため。あだ名は件数が
+    少なく価値が高いので、関連度フィルタは掛けず常に全件渡す。あだ名が無い人は出さない。
+    """
+    lines = [f"- {uid} = {nn}" for uid, nn in (nicknames or {}).items() if nn]
+    if not lines:
+        return ""
+    return (
+        "あだ名辞書(この呼び名はこの人。あだ名で呼ばれたら誰のことか必ずここで照合する):\n"
+        + "\n".join(lines)
+    )
+
+
 _INTERNAL_BLOCK_RE = re.compile(
     r"<(thinking|reasoning|scratchpad|reflection)>.*?</\1>", re.DOTALL | re.IGNORECASE
 )

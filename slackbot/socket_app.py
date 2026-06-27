@@ -57,13 +57,15 @@ def handle_mention(event, say, logger):
     text = strip_bot_mention(raw, BOT_USER_ID) or "こんにちは"
     mentioned = mentioned_user_ids(raw, exclude=BOT_USER_ID)
 
-    # 発言者と本文中の人物のプロフィール(あだ名・特徴)と発言者の機嫌をストアから引いて注入する。
+    # 発言者と本文中の人物のプロフィール(あだ名・特徴)、発言者の機嫌、
+    # さらに全員のあだ名辞書(あだ名で呼ばれた相手を必ず特定するため)をストアから引いて注入する。
     try:
         profiles = store.profiles_for([user_id] + mentioned)
+        nicknames = store.all_nicknames()
         speaker_cold = store.get(user_id)["cold"]
     except Exception:
         logger.exception("user store read failed")
-        profiles, speaker_cold = {}, False
+        profiles, nicknames, speaker_cold = {}, {}, False
 
     try:
         reply = respond(
@@ -75,6 +77,7 @@ def handle_mention(event, say, logger):
             memory_id=MEMORY_ID,
             store=store,
             profiles=profiles,
+            nicknames=nicknames,
             speaker_cold=speaker_cold,
         )
     except Exception:
