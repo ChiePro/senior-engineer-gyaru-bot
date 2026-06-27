@@ -24,7 +24,15 @@ import os
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from slackbot.core import strip_bot_mention, mentioned_user_ids
+from slackbot.core import (
+    strip_bot_mention,
+    mentioned_user_ids,
+    is_autoreply_candidate,
+    summarize_thread,
+    classify_thread,
+    is_silent_reply,
+    strip_skip_token,
+)
 from slackbot.persona import FALLBACK_MESSAGE
 from slackbot.strands_runtime import respond
 from slackbot.user_store import UserStore
@@ -50,14 +58,17 @@ except Exception:
     BOT_USER_ID = None
 
 
-@app.event("app_mention")
-def handle_mention(event, say, logger):
+def _generate_and_post(event, say, *, text, may_stay_silent=False, thread_context=None):
+    """応答生成 → Slack 投稿の共通処理。app_mention と自発応答(message)で共有する。
+
+    may_stay_silent=True(グループ自発参加)で、モデルが「今は黙る」と判断(<skip/> のみ)したら
+    投稿せずに戻る。投稿時は念のため skip 印を除去する。
+    """
     user_id = event.get("user") or "unknown"
     thread_ts = event.get("thread_ts") or event.get("ts")
     raw = event.get("text", "")
 
-    # ボット自身のメンションだけ除去し、第三者 <@Uxxx> は残す(誰のあだ名か判別するため)。
-    text = strip_bot_mention(raw, BOT_USER_ID) or "こんにちは"
+    # 第三者 <@Uxxx> は残したまま、本文中の人物プロフィール解決に使う。
     mentioned = mentioned_user_ids(raw, exclude=BOT_USER_ID)
 
     # 発言者と本文中の人物のプロフィール(あだ名・特徴)、発言者の機嫌、
@@ -83,12 +94,78 @@ def handle_mention(event, say, logger):
             nicknames=nicknames,
             speaker_cold=speaker_cold,
             tavily_api_key=TAVILY_API_KEY,
+            may_stay_silent=may_stay_silent,
+            thread_context=thread_context,
         )
     except Exception:
         logger.exception("Agent invocation failed")
         reply = FALLBACK_MESSAGE
 
-    say(text=reply, thread_ts=thread_ts)
+    # グループ自発参加で「黙る」判断なら投稿しない。
+    if may_stay_silent and is_silent_reply(reply):
+        return
+    say(text=strip_skip_token(reply), thread_ts=thread_ts)
+
+
+@app.event("app_mention")
+def handle_mention(event, say, logger):
+    raw = event.get("text", "")
+    # ボット自身のメンションだけ除去し、第三者 <@Uxxx> は残す(誰のあだ名か判別するため)。
+    text = strip_bot_mention(raw, BOT_USER_ID) or "こんにちは"
+    _generate_and_post(event, say, text=text)
+
+
+@app.event("message")
+def handle_message(event, client, say, logger):
+    """メンション無しのスレッド発言に、空気を読んで自発的に反応する。
+
+    対象は「過去にきあらがメンションされたスレッド」だけ。安いフィルタで候補を絞ってから
+    conversations.replies を1回だけ叩き、参加者と直近やり取りを取得して挙動を決める:
+      - one_on_one(きあら+発言者だけ): 毎回返答
+      - group(他の人もいる): 積極参加。割り込むべきでない時はモデルが <skip/> で黙る
+    Bot をメンションした発言は app_mention が処理するのでここでは無視(二重応答防止)。
+    """
+    thread_ts = event.get("thread_ts")
+    is_thread_reply = bool(thread_ts) and thread_ts != event.get("ts")
+    is_from_bot = bool(event.get("bot_id")) or event.get("user") == BOT_USER_ID
+    raw = event.get("text", "")
+    mentions_bot = bool(BOT_USER_ID) and BOT_USER_ID in mentioned_user_ids(raw)
+
+    if not is_autoreply_candidate(
+        is_thread_reply=is_thread_reply,
+        is_from_bot=is_from_bot,
+        has_subtype=bool(event.get("subtype")),
+        mentions_bot=mentions_bot,
+    ):
+        return
+
+    # 参加者判定と直近やり取りを1回の API で取得する。
+    try:
+        replies = client.conversations_replies(channel=event["channel"], ts=thread_ts, limit=200)
+        messages = replies.get("messages", [])
+    except Exception:
+        logger.exception("conversations_replies failed")
+        return
+
+    bot_mentioned, human_ids, transcript = summarize_thread(messages, BOT_USER_ID)
+    speaker_id = event.get("user") or "unknown"
+    kind = classify_thread(
+        bot_mentioned_in_thread=bot_mentioned,
+        human_participant_ids=human_ids,
+        speaker_id=speaker_id,
+    )
+    if kind == "ignore":
+        return
+
+    text = strip_bot_mention(raw, BOT_USER_ID) or "(発言)"
+    is_group = kind == "group"
+    _generate_and_post(
+        event,
+        say,
+        text=text,
+        may_stay_silent=is_group,
+        thread_context=transcript if is_group else None,
+    )
 
 
 def main() -> None:

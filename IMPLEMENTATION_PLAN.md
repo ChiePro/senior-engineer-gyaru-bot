@@ -1,97 +1,49 @@
-# IMPLEMENTATION_PLAN: Bot に Web 検索(最新情報)を持たせる
+# スレッド内メンションレス応答
 
-## ゴール / 方針
+## 背景 / 要望
 
-ボットが「最新性が要る質問(バージョン・ニュース・現在の状況など)」のときだけ Web を検索し、
-結果を**要約して・口調はギャルのまま・盛らずに**返せるようにする。
+Bot(きあら)にメンションしないと会話できないのが面倒。**一度でもメンションされたスレッド**では、
+メンションなしの発言にも空気を読んで反応してほしい。
 
-- 検索は **Tavily**(LLMエージェント特化の検索API)。`strands_runtime._build_tools` に
-  function-calling ツール `web_search` を1個足す既存パターンに乗せる。
-- **I/O境界を壊さない**: ネットワーク呼び出しは I/O 層(`strands_runtime`)に置く。検索結果の整形・
-  発動文言などの純粋ロジックは `core.py` に置いて TDD で検査する。`core/persona/namespaces` に
-  Tavily / 環境変数を持ち込まない。
-- **戻り値は短く**保つ(既存ツールの方針)。生の検索ペイロードをそのまま渡さず、上位N件を
-  「タイトル — 1〜2文要約 (URL)」に整形して総文字数を上限で切る。
-- **コスト** は「最新性が要るときだけ検索」で抑える。Tavily 無料枠 月1000検索 → 以降従量。
-- **新 secret = `ecs.yaml` 変更 = コスト承認ゲート**に乗る(外部有料API＝お金に関わる変更なので妥当)。
+## 決定事項
 
-## 未決事項(着手前に確定 or 進めながら判断)
+- 対象は「**そのスレッドで過去に1回でもきあらにメンションが来ている**」スレッドだけ。
+  満たさないスレッドには一切割り込まない(チャンネルの無関係なスレッドに勝手に入らない)。
+- スレッドの状況で挙動を分ける(ここで言う 1対1/グループ は *実際に書き込んでいる人数* の話。
+  Slack のチャンネル種別ではない):
+  - **1対1**(きあら + 発言者だけが書き込んでいる) → メンションなしで毎回返答。
+  - **グループ**(発言者以外の人間も書き込んでいる) → **積極的に参加**。割り込むべきでない時だけ黙る。
+- グループの「黙る」は、本応答を1回回し、モデルが「今は割り込まない」と判断したら本文の代わりに
+  `<skip/>` だけ返す方式(積極参加なので大半は喋る前提。別途 judge 呼び出しは挟まない)。
 
-- 検索の `search_depth`(basic / advanced)と `max_results`。まず basic + max_results=5 で開始。
-- `web_search` の発動条件をプロンプトでどこまで縛るか(毎回検索させない)。Stage 2 で文言調整。
-- 純正 `strands_tools.tavily` ではなく**薄い自前ツール**を採用(戻り値整形を自分で制御するため)。
+## アーキテクチャ上の前提(壊さない)
 
----
+- 純粋ロジック層(`core.py`/`persona.py`/`namespaces.py`)は stdlib のみ。判定ロジックは core に置きテスト可能にする。
+- 応答生成は `strands_runtime.respond()` に集約。人格・ふるまいは `persona.py` 単一ソース。
+- Slack 側設定変更が前提(コードだけでは完結しない): イベント購読 `message.channels`(必要に応じ
+  groups/im/mpim)、スコープ `channels:history` 等、アプリ再インストール、Bot をチャンネルに招待。
 
-## Stage 1: 検索結果の整形(純粋ロジック・TDD)
-**Goal**: `core.format_search_results(results, *, max_items=5, max_chars=1200) -> str` を追加。
-  Tavily の results(list[dict: title/url/content])を短い注記文字列に整形する。空なら ""。
-**Success Criteria**:
-  - 上位 max_items 件だけ。各件「- タイトル — 要約 (URL)」形式。
-  - 総文字数が max_chars を超えたら件数を削って収める(URLは壊さない)。
-  - title/content 欠落や空 list に耐える(I/O を持たない・例外を投げない)。
-**Tests** (`tests/test_unit.py`):
-  - 空 list → ""。
-  - 3件 → 各タイトル/URL が含まれる、件数が max_items 以下。
-  - max_chars 超過 → 切り詰めても先頭件は残り URL が途切れない。
+## Stage 1: 純粋ロジック + テスト(core.py / TDD)
+**Goal**: Slack/SDK 無しでテストできる判定ロジック
+**追加関数**:
+- `is_autoreply_candidate(*, is_thread_reply, is_from_bot, has_subtype, mentions_bot)` — API を叩く前の安いフィルタ
+- `summarize_thread(messages, bot_user_id, *, max_transcript)` — replies の dict 配列から
+  (bot_mentioned, human_ids, transcript) を作る
+- `classify_thread(*, bot_mentioned_in_thread, human_participant_ids, speaker_id)` → "ignore"|"one_on_one"|"group"
+- `SKIP_TOKEN` / `strip_skip_token(text)` / `is_silent_reply(text)` — グループの「黙る」判定
+**Tests**: `tests/test_unit.py` に red→green
 **Status**: Complete
 
-## Stage 2: `web_search` ツールの配線(I/O)
-**Goal**: `strands_runtime` に `@tool web_search(query: str) -> str` を追加し、Tavily を叩いて
-  `core.format_search_results` で整形して返す。`_build_tools` の返却リストに加える。
-**Success Criteria**:
-  - `tavily-python` を `requirements.txt`(本番) に追加、`Dockerfile.fargate` のビルドで入る。
-    `requirements-dev.txt` には足さない(テストは core の整形だけ検査するので Tavily 不要)。
-  - API キーは `os.environ["TAVILY_API_KEY"]`(I/O 層でのみ読む)。未設定なら `web_search` を
-    ツールに**入れない**(キー無し環境＝CI/ローカルで壊れない。`compileall` は実行しないので元々安全)。
-  - `persona.BEHAVIOR_GUIDE` に検索の使い方を追記:「最新性・確実性が要るとき**だけ**検索/結果は
-    要約して口調はギャルのまま/ソースを踏まえて盛らない/毎回は検索しない」。
-  - 戻り値は短く(Stage 1 の整形済み文字列)。検索失敗時は短い日本語メッセージを返しループさせない。
-**Tests**:
-  - `tests/test_persona.py`: BEHAVIOR_GUIDE に検索関連の文言/ツール名 `web_search` が含まれること。
-  - ツール本体(I/O)はユニット対象外 → Stage 4 の実モデル検証で担保。
+## Stage 2: 配線(socket_app.py / strands_runtime.py)
+**Goal**: `@app.event("message")` 追加。安いフィルタ → `conversations.replies` 1回 → classify →
+1対1は投稿 / グループは `<skip/>` 以外なら投稿。`handle_mention` と共通処理を `_generate_and_post` に抽出。
+`respond()` に `may_stay_silent` / `thread_context` を追加。人格(積極参加 + skip ルール)は
+`persona.GROUP_REPLY_GUIDE` に集約。
 **Status**: Complete
 
-> **分割メモ**: Stage 1+2 は**コードのみ**で `ecs.yaml` 不変 → コスト承認ゲート不要・本番挙動は不変
-> (キー未設定なら web_search を足さない)。先にこれを PR→マージ→デプロイして安全に土台を入れる。
-> Stage 3 以降は **Tavily APIキーの取得(ユーザー操作)が前提**。キー入手後にまとめてアクティベートする。
-
-## Stage 3: secret & インフラ(`ecs.yaml` / SSM) ← Tavily キー取得が前提
-**Goal**: Tavily API キーを SSM(SecureString)に置き、タスクに注入する。Slack トークンと同パターン。
-**Success Criteria**:
-  - SSM: `aws ssm put-parameter --name /gyaru-bot/TAVILY_API_KEY --type SecureString ...`(手動・1回)。
-  - `ecs.yaml` を3箇所更新:
-    1. `Parameters` に `TavilyApiKeyParam`(Default `/gyaru-bot/TAVILY_API_KEY`)。
-    2. `ExecutionRole` の `read-secrets` の Resource に Tavily param ARN を**明示追加**(現状ワイルドカードではない)。
-    3. コンテナ `Secrets` に `TAVILY_API_KEY` → `ValueFrom` を追加。
-  - `cfn-lint ecs.yaml` が通る。
-  - **これで `ecs.yaml` が差分に出る → デプロイ時に所有者のコスト承認ゲートを通る**(設計どおり)。
-**Tests**: `cfn-lint ecs.yaml infra/github-oidc-bootstrap.yaml`。
-**Status**: Complete (SSM param はユーザーが登録済み / ecs.yaml 配線+cfn-lint OK)
-
-## Stage 4: 実モデル検証(ユニットの外)
-**Goal**: 一時 venv に `boto3 / strands-agents / tavily-python` を入れ、`AWS_PROFILE=gyaru-admin` +
-  `TAVILY_API_KEY` で、最新性が要る質問を数問投げて `str(agent(...))` を目視(scratchpad、リポジトリに残さない)。
-**Success Criteria**:
-  - 「最新の○○のバージョンは?」等で `web_search` が発動し、要約して答える(口調はギャル維持)。
-  - 雑談・自明な質問では検索しない(無駄打ちしない)。
-  - 内部思考タグが漏れない(`strip_internal_tags` 込みで確認)。
-**Tests**: 手動目視(`tune-persona` / `switch-bedrock-model` スキルの実モデル検証手順に準拠)。
-**Status**: Not Started
-
-## Stage 5: デプロイ(PR → 承認 → 本番)
-**Goal**: PR を作り、コスト承認ゲート(`ecs.yaml` 差分)を通して本番反映。
-**Success Criteria**:
-  - `pytest` / `ruff` / `compileall` / `cfn-lint` green。
-  - PR マージ → `deploy.yml` の detect が `ecs.yaml` 差分を検知 → approval(所有者承認) → deploy →
-    `ecs wait services-stable`。
-  - Slack で最新情報系の質問をして実機確認。
-  - 完了後この `IMPLEMENTATION_PLAN.md` を削除。
-**Status**: Not Started
-
----
-
-## ドキュメント更新(完了時)
-- `CLAUDE.md` / `.claude/rules/architecture.md`: I/O 層に `web_search`(Tavily)を足したこと、
-  キーは SSM、整形は `core.format_search_results` に分離、を1行ずつ追記。
-- `docs/design/` に簡単な追記 or ADR(検索プロバイダ選定の経緯)を検討。
+## Stage 3: ドキュメント / 規約 / 実モデル確認
+**Goal**: README に Slack 設定追記、`docs/adr/000X-thread-autoreply.md`、CLAUDE.md/.claude/rules に追記、
+gpt-oss-120b へローカル probe(黙る/参加の目視)。`pytest`/`ruff`/`compileall` green。
+**Status**: In Progress(docs/ADR/README/CLAUDE.md/rules + 全自動ゲート green は完了。
+実モデル probe と Slack 側設定〔イベント購読・スコープ・再インストール・チャンネル招待〕は
+AWS/Slack 認証が要る手動ステップで、デプロイ時にユーザーが実施)

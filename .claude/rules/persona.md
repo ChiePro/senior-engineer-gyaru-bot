@@ -28,6 +28,7 @@
 | `STRANDS_SYSTEM_PROMPT` | `PERSONA` + 長期記憶の活用を促す一文 |
 | `BEHAVIOR_GUIDE` | あだ名/特徴/機嫌ツールの使い方。保存は宣言しない方針 |
 | `COLD_MODE_NOTE` | 発言者が塩対応モードのときだけ system prompt に足す注記 |
+| `GROUP_REPLY_GUIDE` | メンション済みグループスレッドへの自発参加方針(積極参加 + 黙るときは `<skip/>`)。詳細は [docs/adr/0008-thread-autoreply.md](../../docs/adr/0008-thread-autoreply.md) |
 | `FALLBACK_MESSAGE` | 応答生成失敗時の、キャラを保った返信 |
 
 ## 口調を変えるときの手順

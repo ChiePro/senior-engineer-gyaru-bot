@@ -37,5 +37,5 @@
 
 - [ ] 純粋ロジック層に重い import / env 読みを足していないか
 - [ ] 人格・namespace を単一ソース以外で重複定義していないか
-- [ ] `python -m pytest`(27件)/ `ruff check .` / `compileall slackbot scripts` が green か
+- [ ] `python -m pytest`(54件)/ `ruff check .` / `compileall slackbot scripts` が green か
 - [ ] モジュールを移動/改名したら、entrypoint(`python -m slackbot.socket_app`)・`Dockerfile.fargate`・CI の `compileall` パス・README・テスト import を**揃えて**更新したか
