@@ -67,7 +67,7 @@
   - `cfn-lint ecs.yaml` が通る。
   - **これで `ecs.yaml` が差分に出る → デプロイ時に所有者のコスト承認ゲートを通る**(設計どおり)。
 **Tests**: `cfn-lint ecs.yaml infra/github-oidc-bootstrap.yaml`。
-**Status**: Not Started
+**Status**: Complete (SSM param はユーザーが登録済み / ecs.yaml 配線+cfn-lint OK)
 
 ## Stage 4: 実モデル検証(ユニットの外)
 **Goal**: 一時 venv に `boto3 / strands-agents / tavily-python` を入れ、`AWS_PROFILE=gyaru-admin` +
