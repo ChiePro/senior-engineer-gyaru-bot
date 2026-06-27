@@ -50,7 +50,7 @@
 **Tests**:
   - `tests/test_persona.py`: BEHAVIOR_GUIDE に検索関連の文言/ツール名 `web_search` が含まれること。
   - ツール本体(I/O)はユニット対象外 → Stage 4 の実モデル検証で担保。
-**Status**: Not Started
+**Status**: Complete
 
 ## Stage 3: secret & インフラ(`ecs.yaml` / SSM)
 **Goal**: Tavily API キーを SSM(SecureString)に置き、タスクに注入する。Slack トークンと同パターン。

@@ -6,3 +6,6 @@ bedrock-agentcore[strands-agents]>=0.1.0
 websocket-client>=1.7.0
 # あだ名・機嫌ストア(DynamoDB)。strands/agentcore の依存で入るが明示しておく
 boto3>=1.35.0
+# Web 検索(最新情報)。strands_runtime._build_web_search_tool が遅延 import する。
+# TAVILY_API_KEY 未設定なら web_search ツールを渡さないので、入っていても無害。
+tavily-python>=0.5.0
