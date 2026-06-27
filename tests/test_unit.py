@@ -116,6 +116,23 @@ def test_build_people_note_marks_speaker_and_includes_notes():
     assert "U2(発言者本人) | 朝に弱い" in note
 
 
+# --- build_nickname_directory (全員のあだ名逆引き辞書) ---
+def test_build_nickname_directory_empty():
+    assert bot_core.build_nickname_directory({}) == ""
+    # あだ名が空(None)の人だけなら出さない
+    assert bot_core.build_nickname_directory({"U1": None}) == ""
+
+
+def test_build_nickname_directory_lists_all_known_nicknames():
+    # 会話に未登場でも、あだ名で呼ばれたとき誰か照合できるよう全件入れる
+    nicknames = {"U1": "坂もっちゃん", "U2": "ゆうちゃん"}
+    note = bot_core.build_nickname_directory(nicknames)
+    assert "U1 = 坂もっちゃん" in note
+    assert "U2 = ゆうちゃん" in note
+    # あだ名が無い人は混ぜない
+    assert "U3" not in bot_core.build_nickname_directory({"U1": "坂もっちゃん", "U3": None})
+
+
 # --- namespace 整合 (socket_app の retrieval と create_memory の登録が一致する保証) ---
 def test_resolve_substitutes_actor_id():
     assert namespaces.resolve(namespaces.NS_PREFERENCES, "U123") == "/users/U123/preferences/"

@@ -24,6 +24,7 @@ from bedrock_agentcore.memory.integrations.strands.session_manager import (
 from slackbot.core import (
     safe_id,
     build_people_note,
+    build_nickname_directory,
     strip_internal_tags,
     normalize_slack_id,
     as_bool,
@@ -90,6 +91,7 @@ def respond(
     memory_id: str,
     store=None,
     profiles: dict | None = None,
+    nicknames: dict | None = None,
     speaker_cold: bool = False,
 ) -> str:
     """1メンション分の応答を生成して返す。
@@ -97,6 +99,7 @@ def respond(
     - actor_id = Slack ユーザーID で長期記憶を「人」に紐付け
     - session_id = スレッド thread_ts で短期記憶を「スレッド」に紐付け
     - store があれば set_nickname / set_mood ツールを渡し、既知あだ名・塩対応を prompt に注入
+    - nicknames(全員のあだ名)があれば逆引き辞書を常に注入し、あだ名で呼ばれた相手を必ず特定できる
     """
     # AgentCore の actorId/sessionId は [a-zA-Z0-9][a-zA-Z0-9-_]* のみ許可。
     # Slack の thread_ts はドットを含むので safe_id で整形する。actor も同じ整形値を
@@ -111,6 +114,11 @@ def respond(
         # 発言者本人のIDを伝える(set_mood/set_nickname を発言者に対して呼べるように)
         system += f"\n\n発言者(いまあなたに話しかけてる人)の Slack ユーザーID: {user_id}"
         system += "\n\n" + BEHAVIOR_GUIDE
+        # あだ名の逆引き辞書は会話の登場人物に限らず全件注入する(あだ名で呼ばれた相手が
+        # 誰か必ず特定できる状態を保つ)。特徴・notes は登場人物だけに留め文脈の肥大を防ぐ。
+        directory = build_nickname_directory(nicknames or {})
+        if directory:
+            system += "\n\n" + directory
         note = build_people_note(profiles or {}, user_id)
         if note:
             system += "\n\n" + note
